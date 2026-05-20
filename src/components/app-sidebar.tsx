@@ -31,7 +31,7 @@ const managerItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Asset Monitoring", url: "/assets", icon: Activity },
   { title: "Asset Details", url: "/asset-details", icon: Boxes },
-  { title: "Reports", url: "/reports", icon: FileBarChart2 },
+  // { title: "Reports", url: "/reports", icon: FileBarChart2 },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 
