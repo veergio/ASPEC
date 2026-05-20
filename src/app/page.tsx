@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/page-header";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { assets, counts, conditionStyle, type Cond } from "@/lib/assets-data";
+import { counts, conditionStyle, type Cond } from "@/lib/assets-data";
 
 const conditionIcon: Record<Cond, typeof CheckCircle2> = {
   Healthy: CheckCircle2,
@@ -14,14 +14,27 @@ const conditionIcon: Record<Cond, typeof CheckCircle2> = {
 };
 
 const summary = [
-  { label: "Total Active Assets", value: String(assets.length), delta: "Across 4 plants · live monitoring", icon: Boxes, accent: "text-primary", ring: "from-primary/60 via-primary/30 to-transparent", glow: "bg-primary/10" },
+  { label: "Total Active Assets", value: "9", delta: "Across 4 plants · live monitoring", icon: Boxes, accent: "text-primary", ring: "from-primary/60 via-primary/30 to-transparent", glow: "bg-primary/10" },
   { label: "Healthy Assets", value: String(counts.Healthy), delta: "Operating within normal range", icon: CheckCircle2, accent: "text-success", ring: "from-success/60 via-success/30 to-transparent", glow: "bg-success/10" },
   { label: "Warning Assets", value: String(counts.Warning), delta: "Monitor closely · degradation detected", icon: AlertTriangle, accent: "text-warning", ring: "from-warning/60 via-warning/30 to-transparent", glow: "bg-warning/10" },
   { label: "Critical Assets", value: String(counts.Critical), delta: "Immediate action required", icon: Zap, accent: "text-critical", ring: "from-critical/60 via-critical/30 to-transparent", glow: "bg-critical/10" },
   { label: "Average Asset Lifetime", value: "6.4 yr", delta: "Fleet mean · +0.3 yr vs last quarter", icon: Timer, accent: "text-cyan", ring: "from-cyan/60 via-cyan/30 to-transparent", glow: "bg-cyan/10" },
 ];
 
-const priorityAssets = assets.slice(0, 6);
+const clusterData = [
+  { clusterId: 6, jenis: "Performa menurun", penyebab: "Usia pakai", sparePart: "Komponen umum", frequency: 16, biaya: 547437 },
+  { clusterId: 8, jenis: "Mati mendadak", penyebab: "Human error", sparePart: "Terminal", frequency: 1, biaya: 1678000 },
+  { clusterId: 8, jenis: "Mati mendadak", penyebab: "Human error", sparePart: "Terminal, Lampu", frequency: 1, biaya: 1689000 },
+  { clusterId: 8, jenis: "Mati mendadak", penyebab: "Human error", sparePart: "Thermostat, Fan motor, Filter", frequency: 1, biaya: 1845000 },
+  { clusterId: 8, jenis: "Mati mendadak", penyebab: "Human error", sparePart: "Thermostat, Fan motor, Pipa tembaga", frequency: 1, biaya: 6833000 },
+  { clusterId: 8, jenis: "Mati mendadak", penyebab: "Kelembaban tinggi", sparePart: "Bearing, Pipa tembaga, PCB board", frequency: 1, biaya: 30326000 },
+  { clusterId: 9, jenis: "Macet/tersumbat", penyebab: "Aus normal", sparePart: "Suku cadang", frequency: 16, biaya: 9733250 },
+  { clusterId: 10, jenis: "Retak/pecah", penyebab: "Kelembaban tinggi", sparePart: "Suku cadang", frequency: 19, biaya: 2235000 },
+  { clusterId: 12, jenis: "Korsleting", penyebab: "Getaran", sparePart: "Material habis pakai", frequency: 15, biaya: 2713067 },
+  { clusterId: 13, jenis: "Aliran lemah", penyebab: "Faktor lingkungan", sparePart: "Komponen umum", frequency: 16, biaya: 4463938 },
+];
+
+const rupiah = (n: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(n);
 
 export default function Dashboard() {
   return (
@@ -61,7 +74,7 @@ export default function Dashboard() {
         <CardHeader className="flex flex-row items-start justify-between space-y-0">
           <div>
             <CardTitle className="text-base">Smart Asset Priority</CardTitle>
-            <p className="text-xs text-muted-foreground">Auto-sorted by shortest Remaining Useful Life · AI ranked</p>
+            <p className="text-xs text-muted-foreground">Cluster kerusakan teratas · diurutkan berdasarkan frekuensi</p>
           </div>
           <Link href="/assets" className="inline-flex items-center gap-1 rounded-full border border-border bg-background/60 px-3 py-1.5 text-xs text-muted-foreground transition hover:text-foreground">
             View all <ArrowUpRight className="h-3 w-3" />
@@ -71,28 +84,25 @@ export default function Dashboard() {
           <Table>
             <TableHeader>
               <TableRow className="border-border hover:bg-transparent">
-                <TableHead className="pl-6">Asset Name</TableHead>
-                <TableHead>Location</TableHead>
-                <TableHead>Remaining Useful Life</TableHead>
-                <TableHead className="pr-6 text-right">Condition</TableHead>
+                <TableHead className="pl-6">Cluster_ID</TableHead>
+                <TableHead>Jenis Kerusakan</TableHead>
+                <TableHead>Penyebab</TableHead>
+                <TableHead>Spare Part</TableHead>
+                <TableHead>Frequency</TableHead>
+                <TableHead className="pr-6 text-right">Biaya Perbaikan</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {priorityAssets.map((a) => {
-                const Icon = conditionIcon[a.condition];
-                return (
-                  <TableRow key={a.name} className="border-border">
-                    <TableCell className="pl-6 font-medium text-foreground">{a.name}</TableCell>
-                    <TableCell className="text-muted-foreground">{a.location}</TableCell>
-                    <TableCell className="text-muted-foreground">{a.rul}</TableCell>
-                    <TableCell className="pr-6 text-right">
-                      <Badge variant="outline" className={`gap-1 rounded-full px-2.5 ${conditionStyle[a.condition]}`}>
-                        <Icon className="h-3 w-3" />{a.condition}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+              {clusterData.map((c, i) => (
+                <TableRow key={i} className="border-border">
+                  <TableCell className="pl-6 font-medium text-foreground">{c.clusterId}</TableCell>
+                  <TableCell className="text-foreground">{c.jenis}</TableCell>
+                  <TableCell className="text-muted-foreground">{c.penyebab}</TableCell>
+                  <TableCell className="text-muted-foreground">{c.sparePart}</TableCell>
+                  <TableCell className="text-foreground">{c.frequency}</TableCell>
+                  <TableCell className="pr-6 text-right font-medium text-foreground">{rupiah(c.biaya)}</TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </CardContent>
