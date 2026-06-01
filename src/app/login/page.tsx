@@ -10,52 +10,64 @@ import {
   ShieldCheck,
   Cpu,
   Activity,
-  HardHat,
-  BriefcaseBusiness,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
-import { setRole, type Role } from "@/lib/role";
+import { dispatchAuthChange } from "@/lib/role";
 
 export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [role, setSelectedRole] = useState<Role>("manager");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const onSubmit = (e: React.FormEvent) => {
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (loading) return;
 
+    setError(null);
     setLoading(true);
-    setRole(role);
 
-    router.push(role === "technician" ? "/work-report" : "/");
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: email.trim(),
+          password,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setError(data.message || "Login failed. Please try again.");
+        setLoading(false);
+        return;
+      }
+
+      dispatchAuthChange();
+
+      const role = data.user?.role ?? "teknisi";
+
+      setLoading(false);
+
+      router.push(role === "teknisi" ? "/work-report" : "/");
+      router.refresh();
+    } catch {
+      setError("Network error. Please check your connection.");
+      setLoading(false);
+    }
   };
-
-  const roles: {
-    id: Role;
-    label: string;
-    desc: string;
-    icon: typeof BriefcaseBusiness;
-  }[] = [
-    {
-      id: "manager",
-      label: "Asset Manager",
-      desc: "Operations & analytics",
-      icon: BriefcaseBusiness,
-    },
-    {
-      id: "technician",
-      label: "Asset Technician",
-      desc: "Field maintenance",
-      icon: HardHat,
-    },
-  ];
-
   return (
     <div className="grid min-h-screen w-full grid-cols-1 bg-background lg:grid-cols-2">
-      {/* LEFT SIDE */}
+      {/* LEFT SIDE — HERO PANEL */}
       <div className="relative hidden overflow-hidden lg:block">
-        {/* BACKGROUND IMAGE */}
+        {/* Background */}
         <div
           className="absolute inset-0 bg-cover bg-center"
           style={{
@@ -63,10 +75,10 @@ export default function LoginPage() {
           }}
         />
 
-        {/* OVERLAY */}
+        {/* Overlay */}
         <div className="absolute inset-0 bg-gradient-to-br from-background/90 via-background/60 to-primary/30" />
 
-        {/* CONTENT */}
+        {/* Content */}
         <div className="relative z-10 flex h-full flex-col justify-between p-12">
           <AspecLogo size={48} withText />
 
@@ -110,10 +122,10 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* RIGHT SIDE */}
+      {/* RIGHT SIDE — LOGIN FORM */}
       <div className="flex items-center justify-center p-6 lg:p-12">
         <div className="w-full max-w-md">
-          {/* MOBILE HEADER */}
+          {/* Mobile header */}
           <div className="mb-8 flex flex-col items-center text-center lg:hidden">
             <AspecLogo size={64} />
 
@@ -126,7 +138,7 @@ export default function LoginPage() {
             </p>
           </div>
 
-          {/* DESKTOP HEADER */}
+          {/* Desktop header */}
           <div className="mb-6 hidden lg:block">
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-card/60 px-3 py-1 text-[11px] text-muted-foreground">
               <span className="h-1.5 w-1.5 rounded-full bg-success" />
@@ -138,99 +150,88 @@ export default function LoginPage() {
             </h1>
 
             <p className="mt-1 text-sm text-muted-foreground">
-              AI-Powered Predictive Maintenance System
+              Sign in to access the Control Center
             </p>
           </div>
 
-          {/* FORM */}
+          {/* Form */}
           <form
             onSubmit={onSubmit}
             className="space-y-4 rounded-2xl border border-border bg-card p-6 shadow-[var(--shadow-card)]"
           >
-            {/* ROLE SELECT */}
-            <div className="space-y-2">
-              <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                Sign in as
-              </Label>
-
-              <div className="grid grid-cols-2 gap-2">
-                {roles.map((r) => {
-                  const active = role === r.id;
-
-                  return (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => setSelectedRole(r.id)}
-                      className={`flex flex-col items-start rounded-xl border p-3 text-left transition cursor-pointer ${
-                        active
-                          ? "border-cyan/60 bg-cyan/10 ring-1 ring-cyan/40"
-                          : "border-border bg-background/60 hover:border-border/80"
-                      }`}
-                    >
-                      <r.icon
-                        className={`h-4 w-4 ${
-                          active
-                            ? "text-cyan"
-                            : "text-muted-foreground"
-                        }`}
-                      />
-
-                      <div className="mt-2 text-sm font-medium text-foreground">
-                        {r.label}
-                      </div>
-
-                      <div className="text-[10px] text-muted-foreground">
-                        {r.desc}
-                      </div>
-                    </button>
-                  );
-                })}
+            {/* Error alert */}
+            {error && (
+              <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                {error}
               </div>
-            </div>
+            )}
 
-            {/* EMAIL */}
+            {/* Email */}
             <div className="space-y-2">
               <Label htmlFor="email">Email address</Label>
 
               <Input
                 id="email"
                 type="email"
-                defaultValue="operator@aspec.io"
+                placeholder="enter your email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 required
+                autoComplete="email"
+                disabled={loading}
                 className="h-11 bg-background/60"
               />
             </div>
 
-            {/* PASSWORD */}
+            {/* Password */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="password">Password</Label>
-
-                <a
-                  href="#"
-                  className="text-xs text-cyan hover:underline"
-                >
-                  Forgot?
-                </a>
               </div>
 
-              <Input
-                id="password"
-                type="password"
-                defaultValue="••••••••"
-                required
-                className="h-11 bg-background/60"
-              />
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                  disabled={loading}
+                  className="h-11 bg-background/60 pr-10"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  tabIndex={-1}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
             </div>
 
-            {/* BUTTON */}
+            {/* Submit */}
             <Button
               type="submit"
               disabled={loading}
               className="h-11 w-full bg-gradient-to-r from-primary to-cyan text-primary-foreground hover:opacity-90 cursor-pointer"
             >
-              {loading ? "Signing in…" : "Sign in to Control Center"}
+              {loading ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Signing in…
+                </span>
+              ) : (
+                "Sign in to Control Center"
+              )}
             </Button>
 
             <p className="text-center text-xs text-muted-foreground">

@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/sidebar";
 
 import { AspecLogo } from "@/components/aspec-logo";
-import { useRole, clearRole } from "@/lib/role";
+import { useRole, logout } from "@/lib/role";
 
 const managerItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -51,7 +51,7 @@ export function AppSidebar() {
   const role = useRole();
 
   const items =
-    role === "technician" ? technicianItems : managerItems;
+    role === "teknisi" ? technicianItems : managerItems;
 
   const isActive = (path: string) =>
     path === "/"
@@ -74,7 +74,7 @@ export function AppSidebar() {
           <div className="mt-3 inline-flex items-center gap-1.5 self-start rounded-full border border-sidebar-border bg-sidebar-accent/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-white">
             <span className="h-1.5 w-1.5 rounded-full bg-cyan" />
 
-            {role === "technician"
+            {role === "teknisi"
               ? "Technician"
               : "Asset Manager"}
           </div>
@@ -127,10 +127,9 @@ export function AppSidebar() {
               asChild
               className="h-11 text-white hover:text-destructive"
             >
-              <Link
-                href="/login"
-                onClick={() => clearRole()}
-                className="flex items-center gap-3"
+              <button
+                onClick={() => logout()}
+                className="flex items-center gap-3 w-full"
               >
                 <LogOut className="h-4 w-4" />
 
@@ -139,7 +138,7 @@ export function AppSidebar() {
                     Logout
                   </span>
                 )}
-              </Link>
+              </button>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

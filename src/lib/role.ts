@@ -1,41 +1,84 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
-export type Role = "manager" | "technician";
-const KEY = "aspec_role";
+export type Role = "manager" | "teknisi" | "admin";
 
-export function getRole(): Role | null {
-  if (typeof window === "undefined") return null;
-  const v = window.localStorage.getItem(KEY);
-  return v === "manager" || v === "technician" ? v : null;
+export interface AuthUser {
+  user_id: number;
+  name: string;
+  email: string;
+  role: string;
 }
 
-export function setRole(role: Role) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(KEY, role);
-  // Simpan juga ke cookie untuk middleware
-  document.cookie = `${KEY}=${role}; path=/`;
-  window.dispatchEvent(new Event("aspec-role-change"));
+const AUTH_CHANGE_EVENT = "aspec-auth-change";
+
+/**
+ * Notify all useRole / useAuth hooks to re-fetch.
+ */
+export function dispatchAuthChange() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
+  }
 }
 
-export function clearRole() {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(KEY);
-  // Hapus cookie
-  document.cookie = `${KEY}=; path=/; max-age=0`;
-  window.dispatchEvent(new Event("aspec-role-change"));
-}
+/**
+ * Hook that fetches the current user from /api/auth/me.
+ * Re-fetches whenever an auth-change event fires.
+ */
+export function useAuth() {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(true);
 
-export function useRole(): Role {
-  const [role, setR] = useState<Role>("manager");
-  useEffect(() => {
-    const sync = () => setR(getRole() ?? "manager");
-    sync();
-    window.addEventListener("aspec-role-change", sync);
-    window.addEventListener("storage", sync);
-    return () => {
-      window.removeEventListener("aspec-role-change", sync);
-      window.removeEventListener("storage", sync);
-    };
+  const fetchUser = useCallback(async () => {
+    try {
+      const res = await fetch("/api/auth/me");
+      if (res.ok) {
+        const data = await res.json();
+        setUser(data.user ?? null);
+      } else {
+        setUser(null);
+      }
+    } catch {
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
   }, []);
-  return role;
+
+  useEffect(() => {
+    fetchUser();
+    window.addEventListener(AUTH_CHANGE_EVENT, fetchUser);
+    return () => window.removeEventListener(AUTH_CHANGE_EVENT, fetchUser);
+  }, [fetchUser]);
+
+  return { user, loading };
+}
+
+/**
+ * Backwards-compatible hook: returns the role string.
+ * Maps DB roles to the UI role system.
+ */
+export function useRole(): Role {
+  const { user } = useAuth();
+
+  if (!user) return "teknisi";
+
+  // Map DB role → UI role
+  switch (user.role) {
+    case "manager":
+      return "manager";
+    case "admin":
+      return "admin";
+    case "teknisi":
+    default:
+      return "teknisi";
+  }
+}
+
+/**
+ * Logout: hit the API, clear state, redirect.
+ */
+export async function logout() {
+  await fetch("/api/auth/logout", { method: "POST" });
+  dispatchAuthChange();
+  window.location.href = "/login";
 }

@@ -28,7 +28,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               <main className="flex-1 p-4 md:p-8">{children}</main>
             </SidebarInset>
           </div>
-          {role !== "technician" && <AiChatbot />}
+          {role !== "teknisi" && <AiChatbot />}
         </SidebarProvider>
       )}
       <Toaster />
