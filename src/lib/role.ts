@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 
-export type Role = "manager" | "teknisi" | "admin";
+export type Role = "manager" | "teknisi";
 
 export interface AuthUser {
   user_id: number;
@@ -66,8 +66,6 @@ export function useRole(): Role {
   switch (user.role) {
     case "manager":
       return "manager";
-    case "admin":
-      return "admin";
     case "teknisi":
     default:
       return "teknisi";

@@ -21,23 +21,38 @@ import {
 import { Filter, Plus, Search, CheckCircle2, AlertTriangle, Zap, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 
-// 🔴 1. SINKRONISASI TIPE DATA DENGAN MARIADB
 type Cond = "Critical" | "Major" | "Minor";
 type Asset = {
   id: number;
   name: string;
   location: string;
-  years: number | null; // Izinkan null jika belum di-update oleh model ML
+  years: number | null;
   condition: Cond;
   rul: string;
 };
 
-function formatYears(y: number | null) {
+function formatYears(y: number | null): string {
   if (y === null) return "N/A (No Run)";
-  return y < 1 ? `${Math.round(y * 12)} mo` : `${y.toFixed(1)} yr`;
+
+  if (y < 1) {
+    const totalMonths = Math.round(y * 12);
+    return totalMonths === 0 ? "0 mo" : `${totalMonths} mo`;
+  }
+
+  const years = Math.floor(y);
+  const remainingMonths = Math.round((y - years) * 12);
+
+  if (remainingMonths === 12) {
+    return `${years + 1} yr`;
+  }
+
+  if (remainingMonths === 0) {
+    return `${years} yr`;
+  }
+
+  return `${years} yr ${remainingMonths} mo`;
 }
 
-// 🔴 2. PENYESUAIAN WARNA BADGE SESUAI STATUS DB RIIL
 const conditionStyle: Record<Cond, string> = {
   Critical: "border-destructive/40 bg-destructive/10 text-destructive",
   Major: "border-warning/40 bg-warning/10 text-warning",
