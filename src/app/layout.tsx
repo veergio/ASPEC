@@ -13,7 +13,6 @@ import { usePathname } from "next/navigation";
 function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isAuthPage = pathname === "/login";
-  const role = useRole();
 
   return (
     <>
@@ -28,7 +27,6 @@ function Shell({ children }: { children: React.ReactNode }) {
               <main className="flex-1 p-4 md:p-8">{children}</main>
             </SidebarInset>
           </div>
-          {role !== "teknisi" && <AiChatbot />}
         </SidebarProvider>
       )}
       <Toaster />
@@ -41,6 +39,7 @@ function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <Shell>{children}</Shell>
+      <AiChatbot />
     </QueryClientProvider>
   );
 }

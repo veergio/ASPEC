@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
       user_id: user.user_id,
       name: user.name,
       email: user.email,
-      role: user.role ?? "teknisi",
+      role: user.role,
     });
 
 
@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
         user_id: user.user_id,
         name: user.name,
         email: user.email,
-        role: user.role ?? "teknisi",
+        role: user.role,
       },
     });
 
