@@ -162,7 +162,7 @@ export default function LoginPage() {
                       key={r.id}
                       type="button"
                       onClick={() => setSelectedRole(r.id)}
-                      className={`flex flex-col items-start rounded-xl border p-3 text-left transition ${
+                      className={`flex flex-col items-start rounded-xl border p-3 text-left transition cursor-pointer ${
                         active
                           ? "border-cyan/60 bg-cyan/10 ring-1 ring-cyan/40"
                           : "border-border bg-background/60 hover:border-border/80"
@@ -228,7 +228,7 @@ export default function LoginPage() {
             <Button
               type="submit"
               disabled={loading}
-              className="h-11 w-full bg-gradient-to-r from-primary to-cyan text-primary-foreground hover:opacity-90"
+              className="h-11 w-full bg-gradient-to-r from-primary to-cyan text-primary-foreground hover:opacity-90 cursor-pointer"
             >
               {loading ? "Signing in…" : "Sign in to Control Center"}
             </Button>

@@ -12,12 +12,16 @@ export function getRole(): Role | null {
 export function setRole(role: Role) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(KEY, role);
+  // Simpan juga ke cookie untuk middleware
+  document.cookie = `${KEY}=${role}; path=/`;
   window.dispatchEvent(new Event("aspec-role-change"));
 }
 
 export function clearRole() {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(KEY);
+  // Hapus cookie
+  document.cookie = `${KEY}=; path=/; max-age=0`;
   window.dispatchEvent(new Event("aspec-role-change"));
 }
 

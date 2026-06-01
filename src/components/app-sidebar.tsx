@@ -9,6 +9,7 @@ import {
   Boxes,
   ClipboardList,
   History,
+  RefreshCcw,
 } from "lucide-react";
 
 import {
@@ -38,8 +39,9 @@ const managerItems = [
 const technicianItems = [
   { title: "Work Report Form", url: "/work-report", icon: ClipboardList },
   { title: "Report History", url: "/report-history", icon: History },
+  { title: "Work Replace Form", url: "/work-replace", icon: RefreshCcw },
   { title: "Settings", url: "/settings", icon: Settings },
-];
+]
 
 export function AppSidebar() {
   const { state } = useSidebar();
@@ -65,6 +67,7 @@ export function AppSidebar() {
         <AspecLogo
           size={collapsed ? 28 : 36}
           withText={!collapsed}
+          variant="sidebar"
         />
 
         {!collapsed && (
