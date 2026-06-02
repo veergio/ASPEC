@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AppTopbar } from "@/components/app-topbar";
-import { AiChatbot } from "@/components/ai-chatbot";
 import { Toaster } from "@/components/ui/sonner";
 import { useRole } from "@/lib/role";
 import { usePathname } from "next/navigation";
@@ -39,7 +38,6 @@ function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <Shell>{children}</Shell>
-      <AiChatbot />
     </QueryClientProvider>
   );
 }

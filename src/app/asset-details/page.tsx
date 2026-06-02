@@ -1,37 +1,198 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
 import {
   AlertTriangle, Wrench, Package, Wallet, MapPin, Gauge,
   TrendingUp, Activity, CheckCircle2, Zap, Cog, Calendar,
-  Sparkles, ArrowUpRight, Thermometer,
+  Sparkles, ArrowUpRight, Thermometer, ChevronLeft, ChevronRight
 } from "lucide-react";
-import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid,
-  ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from "recharts";
+import { AiChatbot } from "@/components/ai-chatbot";
 
 type Condition = "Healthy" | "Warning" | "Critical";
 
-const assetList: {
-  id: string; name: string; location: string; health: number;
-  rul: string; rulPct: number; condition: Condition;
-}[] = [
-    { id: "C-204", name: "Compressor C-204", location: "Plant A · Bay 5", health: 58, rul: "180h", rulPct: 22, condition: "Critical" },
-    { id: "T-01", name: "Turbine T-01", location: "Plant A · Bay 2", health: 94, rul: "1,240h", rulPct: 88, condition: "Healthy" },
-    { id: "P-118", name: "Pump P-118", location: "Plant B · Line 3", health: 76, rul: "640h", rulPct: 58, condition: "Warning" },
-    { id: "G-09", name: "Generator G-09", location: "Substation 1", health: 88, rul: "980h", rulPct: 76, condition: "Healthy" },
-    { id: "R-15", name: "Robot Arm R-15", location: "Plant B · Cell 4", health: 64, rul: "320h", rulPct: 38, condition: "Warning" },
-  ];
+interface ApiAsset {
+  id: string | number;
+  name: string;
+  location: string;
+  condition: string;
+  rul: number;
+  op_hours: number;
+  instalation_date: string;
+  category: string;
+  dominant_damage: string | null;
+  dominant_cause: string | null;
+  dominant_spare_part: string | null;
+  estimated_cost: number | null;
+  recommendation_narrative: string | null;
+}
 
-const timeline = [
-  { date: "12 May 2026", title: "Penggantian kontaktor utama", tag: "Tinggi", tone: "warning", note: "Teknisi: Budi S. · Durasi 2j 15m" },
-  { date: "28 Apr 2026", title: "Pembersihan filter & inspeksi termal", tag: "Ringan", tone: "success", note: "Suhu turun 8°C pasca tindakan" },
-  { date: "10 Apr 2026", title: "Kalibrasi sensor getaran", tag: "Sedang", tone: "cyan", note: "Baseline vibrasi diperbarui" },
-  { date: "22 Mar 2026", title: "Overhaul ringan modul kompresor", tag: "Fatal", tone: "critical", note: "Spare part: roller bearing × 2" },
-];
+interface ApiLog {
+  ticket_id: string | number;
+  asset_id: string | number;
+  title: string;
+  tag: string;
+  note: string;
+  completed_date: string;
+}
+
+interface Asset {
+  id: string;
+  name: string;
+  location: string;
+  health: number;
+  rul: string;
+  rulPct: number;
+  condition: Condition;
+  opHours: string;
+  dominantDamage: string;
+  dominantCause: string;
+  dominantSparePart: string;
+  estimatedCost: string;
+  recommendationNarrative: string;
+}
+
+interface TimelineEntry {
+  date: string;
+  title: string;
+  tag: string;
+  tone: string;
+  note: string;
+}
+
+function getRulCondition(category: string, rul: number): Condition {
+  // Kelompok 1: Safety & Security
+  if (
+    category === "Sistem Pemadam Kebakaran" ||
+    category === "Sistem Proteksi Kebakaran Aktif" ||
+    category === "Security Sistem"
+  ) {
+    if (rul <= 0.25) return "Critical";
+    if (rul <= 1.0) return "Warning";
+    return "Healthy";
+  }
+
+  // Kelompok 2: IT & Telecom
+  if (
+    category === "Sistem Telekomunikasi Gedung" ||
+    category === "Pencatatan Meter"
+  ) {
+    if (rul <= 0.5) return "Critical";
+    if (rul <= 2.0) return "Warning";
+    return "Healthy";
+  }
+
+  // Kelompok 3: Core Operations (M&E)
+  if (
+    category === "Mechanical" ||
+    category === "Electrical" ||
+    category === "Ventilasi Sistem" ||
+    category === "Sistem Transportasi Gedung" ||
+    category === "Sistem Energi"
+  ) {
+    if (rul <= 1.0) return "Critical";
+    if (rul <= 3.0) return "Warning";
+    return "Healthy";
+  }
+
+  // Kelompok 4: Sipil & Plumbing
+  if (
+    category === "Civil" ||
+    category === "Arsitektur" ||
+    category === "Plumbing" ||
+    category === "Distribusi Air"
+  ) {
+    if (rul <= 2.0) return "Critical";
+    if (rul <= 5.0) return "Warning";
+    return "Healthy";
+  }
+
+  // Kelompok 5: Lainnya
+  if (category === "Latihan Balakar") {
+    if (rul <= 0.5) return "Critical";
+    if (rul <= 1.5) return "Warning";
+    return "Healthy";
+  }
+
+  return "Healthy";
+}
+
+function normaliseCondition(raw: string): Condition {
+  const lower = raw?.toLowerCase() ?? "";
+  if (lower === "healthy") return "Healthy";
+  if (lower === "warning") return "Warning";
+  if (lower === "critical") return "Critical";
+  return "Critical";
+}
+
+function formatRul(years: number): string {
+  if (years <= 0) return "0 mo";
+  const yrs = Math.floor(years);
+  const mos = Math.round((years - yrs) * 12);
+
+  if (yrs === 0) return `${mos} mo`;
+  if (mos === 0) return `${yrs} yr`;
+  return `${yrs} yr ${mos} mo`;
+}
+
+function formatCurrency(amount: number | null): string {
+  if (amount == null) return "N/A";
+  return `Rp ${amount.toLocaleString("id-ID")}`;
+}
+
+function formatDate(iso: string): string {
+  if (!iso) return "N/A";
+  return new Date(iso).toLocaleDateString("id-ID", {
+    day: "numeric", month: "short", year: "numeric",
+  });
+}
+
+function severityTone(tag: string): string {
+  const t = tag?.toLowerCase() ?? "";
+  if (t.includes("healthy")) return "cyan";
+  if (t.includes("warning")) return "warning";
+  if (t.includes("critical")) return "critical";
+  return "cyan";
+}
+
+function mapAsset(a: ApiAsset): Asset {
+  // Calculate age in years based on installation date
+  const installDate = a.instalation_date ? new Date(a.instalation_date) : new Date();
+  const today = new Date();
+  const diffTime = Math.max(0, today.getTime() - installDate.getTime());
+  const elapsedYears = diffTime / (1000 * 60 * 60 * 24 * 365.25);
+
+  const totalLifeYears = elapsedYears + (a.rul || 0);
+  const healthPct = totalLifeYears > 0 ? Math.round(((a.rul || 0) / totalLifeYears) * 100) : 0;
+
+  return {
+    id: String(a.id),
+    name: a.name,
+    location: a.location || "N/A",
+    health: Math.min(healthPct, 100),
+    rul: formatRul(a.rul),
+    rulPct: Math.min(healthPct, 100),
+    condition: getRulCondition(a.category, a.rul || 0),
+    opHours: `${a.op_hours?.toLocaleString("id-ID") ?? "0"}h`,
+    dominantDamage: a.dominant_damage ?? "—",
+    dominantCause: a.dominant_cause ?? "—",
+    dominantSparePart: a.dominant_spare_part ?? "—",
+    estimatedCost: formatCurrency(a.estimated_cost),
+    recommendationNarrative: a.recommendation_narrative ?? "Tidak ada rekomendasi saat ini.",
+  };
+}
+
+function mapLog(l: ApiLog): TimelineEntry {
+  return {
+    date: formatDate(l.completed_date),
+    title: l.title,
+    tag: l.tag,
+    tone: severityTone(l.tag),
+    note: l.note,
+  };
+}
 
 const conditionStyle: Record<Condition, string> = {
   Healthy: "border-success/40 bg-success/10 text-success",
@@ -53,17 +214,79 @@ const toneStyle: Record<string, string> = {
 };
 
 export default function AssetDetailsPage() {
-  const [selectedId, setSelectedId] = useState(assetList[0].id);
-  const asset = assetList.find((a) => a.id === selectedId)!;
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [allLogs, setAllLogs] = useState<ApiLog[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch("/api/assets/details");
+        if (!res.ok) throw new Error("Failed to fetch");
+        const { assets: raw, logs }: { assets: ApiAsset[]; logs: ApiLog[] } =
+          await res.json();
+        const mapped = raw.map(mapAsset);
+        setAssets(mapped);
+        setAllLogs(logs);
+        if (mapped.length) setSelectedId(mapped[0].id);
+      } catch (err) {
+        setError("Gagal memuat data aset.");
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center text-muted-foreground text-sm">
+        Memuat data aset…
+      </div>
+    );
+  }
+  if (error || !assets.length) {
+    return (
+      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center text-critical text-sm">
+        {error ?? "Tidak ada data aset."}
+      </div>
+    );
+  }
+
+  const asset = assets.find((a) => a.id === selectedId) ?? assets[0];
   const ConditionIcon = conditionIcon[asset.condition];
+
+  const timeline: TimelineEntry[] = allLogs
+    .filter((l) => String(l.asset_id) === asset.id)
+    .slice(0, 4)
+    .map(mapLog);
+
+  // Hitung index data untuk halaman saat ini
+  const totalPages = Math.ceil(assets.length / itemsPerPage);
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentAssets = assets.slice(indexOfFirstItem, indexOfLastItem);
 
   return (
     <div className="-m-4 min-h-[calc(100vh-4rem)] bg-background p-4 md:-m-8 md:p-8">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">Asset Intelligence</div>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground md:text-3xl">Asset Details</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Deep-dive AI insight, maintenance intelligence, and lifecycle analytics.</p>
+          <div className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+            Asset Intelligence
+          </div>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground md:text-3xl">
+            Asset Details
+          </h1>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            Deep-dive AI insight, maintenance intelligence, and lifecycle analytics.
+          </p>
         </div>
         <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
           <Sparkles className="mr-1 h-3 w-3" /> AI Insight Updated · Live
@@ -71,32 +294,73 @@ export default function AssetDetailsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-        <Card className="border-border bg-card shadow-sm lg:col-span-1">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-foreground">Asset List</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-1.5 p-2">
-            {assetList.map((a) => {
-              const active = a.id === selectedId;
-              const Icon = conditionIcon[a.condition];
-              return (
-                <button
-                  key={a.id}
-                  onClick={() => setSelectedId(a.id)}
-                  className={`w-full rounded-xl border p-3 text-left transition ${active ? "border-primary/40 bg-primary/5 shadow-sm" : "border-transparent hover:border-border hover:bg-muted/60"
-                    }`}
+        <Card className="border-border bg-card shadow-sm lg:col-span-1 flex flex-col justify-between">
+          <div>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-foreground">Asset List</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-1.5 p-2">
+              {currentAssets.map((a) => {
+                const active = a.id === selectedId;
+                const Icon = conditionIcon[a.condition];
+                return (
+                  <button
+                    key={a.id}
+                    onClick={() => setSelectedId(a.id)}
+                    className={`w-full rounded-xl border p-3 text-left transition ${active
+                      ? "border-primary/40 bg-primary/5 shadow-sm"
+                      : "border-transparent hover:border-border hover:bg-muted/60"
+                      }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-medium text-foreground">
+                        {a.name}
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className={`gap-1 text-[10px] ${conditionStyle[a.condition]}`}
+                      >
+                        <Icon className="h-3 w-3" />
+                        {a.condition}
+                      </Badge>
+                    </div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      {a.location}
+                    </div>
+                  </button>
+                );
+              })}
+            </CardContent>
+          </div>
+
+          {/* Kontrol Paginasi Terintegrasi di bagian bawah sidebar list */}
+          {totalPages > 1 && (
+            <div className="p-3 border-t border-border flex items-center justify-between gap-2 bg-muted/20">
+              <span className="text-[11px] text-muted-foreground font-medium">
+                Hal {currentPage} dari {totalPages}
+              </span>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7 rounded-lg"
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-medium text-foreground">{a.name}</span>
-                    <Badge variant="outline" className={`gap-1 text-[10px] ${conditionStyle[a.condition]}`}>
-                      <Icon className="h-3 w-3" />{a.condition}
-                    </Badge>
-                  </div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">{a.location}</div>
-                </button>
-              );
-            })}
-          </CardContent>
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7 rounded-lg"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          )}
         </Card>
 
         <div className="space-y-4 lg:col-span-3">
@@ -110,39 +374,91 @@ export default function AssetDetailsPage() {
                   </div>
                   <div>
                     <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                      {asset.id}<span className="h-1 w-1 rounded-full bg-muted-foreground/50" />Industrial Equipment
+                      {asset.id}
+                      <span className="h-1 w-1 rounded-full bg-muted-foreground/50" />
+                      Industrial Equipment
                     </div>
-                    <h2 className="mt-1 text-2xl font-semibold text-foreground">{asset.name}</h2>
+                    <h2 className="mt-1 text-2xl font-semibold text-foreground">
+                      {asset.name}
+                    </h2>
                     <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                      <span className="inline-flex items-center gap-1.5"><MapPin className="h-4 w-4 text-primary" />{asset.location}</span>
-                      <span className="inline-flex items-center gap-1.5"><Calendar className="h-4 w-4 text-cyan" />Last service 12 May 2026</span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <MapPin className="h-4 w-4 text-primary" />
+                        {asset.location}
+                      </span>
+                      {timeline[0] && (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Calendar className="h-4 w-4 text-cyan" />
+                          Last service {timeline[0].date}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
-                <Badge variant="outline" className={`gap-1.5 px-3 py-1.5 text-sm ${conditionStyle[asset.condition]}`}>
-                  <ConditionIcon className="h-4 w-4" />{asset.condition} Condition
+                <Badge
+                  variant="outline"
+                  className={`gap-1.5 px-3 py-1.5 text-sm ${conditionStyle[asset.condition]}`}
+                >
+                  <ConditionIcon className="h-4 w-4" />
+                  {asset.condition} Condition
                 </Badge>
               </div>
 
               <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
                 {[
-                  { label: "Asset Health", value: `${asset.health}`, unit: "%", progress: asset.health, icon: Gauge, color: "text-primary" },
-                  { label: "Remaining Useful Life", value: asset.rul, unit: "", progress: asset.rulPct, icon: TrendingUp, color: "text-cyan" },
-                  { label: "Operating Hours", value: "8,420h", unit: "", progress: null, icon: Activity, color: "text-primary", sub: "Since last overhaul" },
+                  {
+                    label: "Asset Health",
+                    value: `${asset.health}`,
+                    unit: "%",
+                    progress: asset.health,
+                    icon: Gauge,
+                    color: "text-primary",
+                    sub: undefined,
+                  },
+                  {
+                    label: "Remaining Useful Life",
+                    value: asset.rul,
+                    unit: "",
+                    progress: asset.rulPct,
+                    icon: TrendingUp,
+                    color: "text-cyan",
+                    sub: undefined,
+                  },
+                  {
+                    label: "Operating Hours",
+                    value: asset.opHours,
+                    unit: "",
+                    progress: null,
+                    icon: Activity,
+                    color: "text-primary",
+                    sub: "Since last overhaul",
+                  },
                 ].map((m) => (
-                  <div key={m.label} className="rounded-2xl border border-border bg-muted/50 p-4">
+                  <div
+                    key={m.label}
+                    className="rounded-2xl border border-border bg-muted/50 p-4"
+                  >
                     <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
                       <span>{m.label}</span>
                       <m.icon className={`h-4 w-4 ${m.color}`} />
                     </div>
                     <div className="mt-2 flex items-baseline gap-1">
-                      <span className="text-3xl font-semibold text-foreground">{m.value}</span>
-                      {m.unit && <span className="text-sm text-muted-foreground">{m.unit}</span>}
+                      <span className="text-3xl font-semibold text-foreground">
+                        {m.value}
+                      </span>
+                      {m.unit && (
+                        <span className="text-sm text-muted-foreground">{m.unit}</span>
+                      )}
                     </div>
                     {m.progress !== null ? (
-                      <Progress value={m.progress} className="mt-3 h-2 bg-secondary [&>div]:bg-gradient-to-r [&>div]:from-primary [&>div]:to-cyan" />
+                      <Progress
+                        value={m.progress}
+                        className="mt-3 h-2 bg-secondary [&>div]:bg-gradient-to-r [&>div]:from-primary [&>div]:to-cyan"
+                      />
                     ) : (
-                      <div className="mt-3 text-[11px] text-muted-foreground">{m.sub}</div>
+                      <div className="mt-3 text-[11px] text-muted-foreground">
+                        {m.sub}
+                      </div>
                     )}
                   </div>
                 ))}
@@ -153,27 +469,68 @@ export default function AssetDetailsPage() {
           <div>
             <div className="mb-3 flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-primary" />
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-foreground">Smart Damage History — AI Insight</h3>
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-foreground">
+                Smart Damage History — AI Insight
+              </h3>
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {[
-                { label: "Most Frequent Complaint", value: "Suhu tidak stabil", sub: "12 laporan / 90 hari", hint: "Frekuensi naik 18% vs bulan lalu", icon: Thermometer, tone: "warning" },
-                { label: "Main Failure Cause", value: "Debu / Kotoran", sub: "Root cause utama", hint: "Dampak: penurunan efisiensi −9%", icon: Wrench, tone: "critical" },
-                { label: "Most Replaced Spare Part", value: "Kontaktor", sub: "5× penggantian / 6 bulan", hint: "Lead time rata-rata 6 hari", icon: Package, tone: "cyan" },
-                { label: "Average Maintenance Cost", value: "Rp 7.800.000", sub: "per intervensi", hint: "Spending YTD Rp 46,8 jt", icon: Wallet, tone: "success" },
+                {
+                  label: "Most Frequent Complaint",
+                  value: asset.dominantDamage,
+                  sub: "Root complaint",
+                  hint: "Dari data NLP cluster terbaru",
+                  icon: Thermometer,
+                  tone: "warning",
+                },
+                {
+                  label: "Main Failure Cause",
+                  value: asset.dominantCause,
+                  sub: "Root cause utama",
+                  hint: "Berdasarkan analisis log historis",
+                  icon: Wrench,
+                  tone: "critical",
+                },
+                {
+                  label: "Most Replaced Spare Part",
+                  value: asset.dominantSparePart,
+                  sub: "Suku cadang utama",
+                  hint: "Berdasarkan frekuensi penggantian",
+                  icon: Package,
+                  tone: "cyan",
+                },
+                {
+                  label: "Average Maintenance Cost",
+                  value: asset.estimatedCost,
+                  sub: "per intervensi (estimasi)",
+                  hint: "Dari data biaya cluster NLP",
+                  icon: Wallet,
+                  tone: "success",
+                },
               ].map((s) => (
-                <Card key={s.label} className="border-border bg-card shadow-sm transition hover:shadow-md">
+                <Card
+                  key={s.label}
+                  className="border-border bg-card shadow-sm transition hover:shadow-md"
+                >
                   <CardContent className="p-5">
                     <div className="flex items-center justify-between">
-                      <div className={`grid h-10 w-10 place-items-center rounded-xl border ${toneStyle[s.tone]}`}>
+                      <div
+                        className={`grid h-10 w-10 place-items-center rounded-xl border ${toneStyle[s.tone]}`}
+                      >
                         <s.icon className="h-5 w-5" />
                       </div>
                       <ArrowUpRight className="h-4 w-4 text-muted-foreground" />
                     </div>
-                    <div className="mt-4 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{s.label}</div>
-                    <div className="mt-1 text-lg font-semibold text-foreground">{s.value}</div>
+                    <div className="mt-4 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                      {s.label}
+                    </div>
+                    <div className="mt-1 text-lg font-semibold text-foreground">
+                      {s.value}
+                    </div>
                     <div className="text-[11px] text-muted-foreground">{s.sub}</div>
-                    <div className="mt-3 rounded-lg bg-muted/60 px-2.5 py-1.5 text-[11px] text-foreground/80">{s.hint}</div>
+                    <div className="mt-3 rounded-lg bg-muted/60 px-2.5 py-1.5 text-[11px] text-foreground/80">
+                      {s.hint}
+                    </div>
                   </CardContent>
                 </Card>
               ))}
@@ -183,46 +540,72 @@ export default function AssetDetailsPage() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <Card className="border-border bg-card shadow-sm lg:col-span-2">
               <CardHeader>
-                <CardTitle className="text-base text-foreground">Maintenance Activity Timeline</CardTitle>
+                <CardTitle className="text-base text-foreground">
+                  Maintenance Activity Timeline
+                </CardTitle>
               </CardHeader>
               <CardContent>
-                <ol className="relative space-y-5 border-l border-border pl-6">
-                  {timeline.map((t, i) => (
-                    <li key={i} className="relative">
-                      <span className={`absolute -left-[29px] top-1 grid h-5 w-5 place-items-center rounded-full border ${toneStyle[t.tone]}`}>
-                        <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                      </span>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="text-sm font-medium text-foreground">{t.title}</div>
-                        <Badge variant="outline" className={`text-[10px] ${toneStyle[t.tone]}`}>{t.tag}</Badge>
-                      </div>
-                      <div className="mt-0.5 text-[11px] text-muted-foreground">{t.date} · {t.note}</div>
-                    </li>
-                  ))}
-                </ol>
+                {timeline.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    Belum ada riwayat maintenance untuk aset ini.
+                  </p>
+                ) : (
+                  <ol className="relative space-y-5 border-l border-border pl-6">
+                    {timeline.map((t, i) => (
+                      <li key={i} className="relative">
+                        <span
+                          className={`absolute -left-[29px] top-1 grid h-5 w-5 place-items-center rounded-full border ${toneStyle[t.tone]}`}
+                        >
+                          <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                        </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="text-sm font-medium text-foreground">
+                            {t.title}
+                          </div>
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] ${toneStyle[t.tone]}`}
+                          >
+                            {t.tag}
+                          </Badge>
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-muted-foreground">
+                          {t.date} · {t.note}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
               </CardContent>
             </Card>
 
             <Card className="border-primary/30 bg-gradient-to-br from-primary/10 via-card to-cyan/10 shadow-sm">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base text-foreground">
-                  <Sparkles className="h-4 w-4 text-primary" />Predictive Recommendation
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  Predictive Recommendation
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 <p className="text-sm text-foreground/85">
-                  Berdasarkan tren vibrasi & suhu 14 hari terakhir, lakukan{" "}
-                  <span className="font-semibold text-primary">preventive cleaning</span> dalam 7 hari.
+                  {asset.recommendationNarrative}
                 </p>
-                <div className="rounded-xl border border-border bg-card/70 p-3">
-                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Estimated impact</div>
-                  <div className="mt-1 text-sm font-medium text-foreground">+12% asset lifetime · −Rp 3,2 jt biaya tahunan</div>
-                </div>
                 <div className="grid grid-cols-3 gap-2 text-center">
-                  {[{ k: "Uptime", v: "98.2%" }, { k: "MTBF", v: "640h" }, { k: "MTTR", v: "2.1h" }].map((m) => (
-                    <div key={m.k} className="rounded-lg border border-border bg-card p-2">
-                      <div className="text-[10px] uppercase text-muted-foreground">{m.k}</div>
-                      <div className="text-sm font-semibold text-foreground">{m.v}</div>
+                  {[
+                    { k: "RUL", v: asset.rul },
+                    { k: "Condition", v: asset.condition },
+                    { k: "Op Hours", v: asset.opHours },
+                  ].map((m) => (
+                    <div
+                      key={m.k}
+                      className="rounded-lg border border-border bg-card p-2"
+                    >
+                      <div className="text-[10px] uppercase text-muted-foreground">
+                        {m.k}
+                      </div>
+                      <div className="text-sm font-semibold text-foreground">
+                        {m.v}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -231,6 +614,7 @@ export default function AssetDetailsPage() {
           </div>
         </div>
       </div>
+      <AiChatbot />
     </div>
   );
 }

@@ -4,7 +4,6 @@ import { Bot, Send, Sparkles, X, Move } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion, useDragControls, useMotionValue } from "framer-motion";
 import { useRole } from "@/lib/role";
-import { usePathname } from "next/navigation";
 
 const suggestions = [
   "How to extend asset lifetime?",
@@ -19,7 +18,6 @@ const seed: ChatMsg[] = [
 
 export function AiChatbot() {
   const role = useRole();
-  const pathname = usePathname();
 
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMsg[]>(seed);
@@ -49,7 +47,7 @@ export function AiChatbot() {
     }
   }, [x, y]);
 
-  if (pathname === "/login" || role === "teknisi") {
+  if (role === "teknisi") {
     return null;
   }
 
