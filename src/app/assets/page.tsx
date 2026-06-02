@@ -21,7 +21,7 @@ import {
 import { Filter, Plus, Search, CheckCircle2, AlertTriangle, Zap, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 
-type Cond = "Critical" | "Major" | "Minor";
+type Cond = "Critical" | "Warning" | "Healthy";
 type Asset = {
   id: number;
   name: string;
@@ -31,41 +31,88 @@ type Asset = {
   rul: string;
 };
 
+function getRulCondition(category: string, rul: number | null): Cond {
+  if (rul === null) return "Healthy";
+
+  // Kelompok 1: Safety & Security
+  if (
+    category === "Sistem Pemadam Kebakaran" ||
+    category === "Sistem Proteksi Kebakaran Aktif" ||
+    category === "Security Sistem"
+  ) {
+    if (rul <= 0.25) return "Critical";
+    if (rul <= 1.0) return "Warning";
+    return "Healthy";
+  }
+
+  // Kelompok 2: IT & Telecom
+  if (
+    category === "Sistem Telekomunikasi Gedung" ||
+    category === "Pencatatan Meter"
+  ) {
+    if (rul <= 0.5) return "Critical";
+    if (rul <= 2.0) return "Warning";
+    return "Healthy";
+  }
+
+  // Kelompok 3: Core Operations (M&E)
+  if (
+    category === "Mechanical" ||
+    category === "Electrical" ||
+    category === "Ventilasi Sistem" ||
+    category === "Sistem Transportasi Gedung" ||
+    category === "Sistem Energi"
+  ) {
+    if (rul <= 1.0) return "Critical";
+    if (rul <= 3.0) return "Warning";
+    return "Healthy";
+  }
+
+  // Kelompok 4: Sipil & Plumbing
+  if (
+    category === "Civil" ||
+    category === "Arsitektur" ||
+    category === "Plumbing" ||
+    category === "Distribusi Air"
+  ) {
+    if (rul <= 2.0) return "Critical";
+    if (rul <= 5.0) return "Warning";
+    return "Healthy";
+  }
+
+  // Kelompok 5: Lainnya
+  if (category === "Latihan Balakar") {
+    if (rul <= 0.5) return "Critical";
+    if (rul <= 1.5) return "Warning";
+    return "Healthy";
+  }
+
+  return "Healthy";
+}
+
 function formatYears(y: number | null): string {
-  if (y === null) return "N/A (No Run)";
+  if (y === null || y < 0) return "N/A";
+  const yrs = Math.floor(y);
+  const mos = Math.round((y - yrs) * 12);
 
-  if (y < 1) {
-    const totalMonths = Math.round(y * 12);
-    return totalMonths === 0 ? "0 mo" : `${totalMonths} mo`;
-  }
-
-  const years = Math.floor(y);
-  const remainingMonths = Math.round((y - years) * 12);
-
-  if (remainingMonths === 12) {
-    return `${years + 1} yr`;
-  }
-
-  if (remainingMonths === 0) {
-    return `${years} yr`;
-  }
-
-  return `${years} yr ${remainingMonths} mo`;
+  if (yrs === 0) return `${mos} mo`;
+  if (mos === 0) return `${yrs} yr`;
+  return `${yrs} yr ${mos} mo`;
 }
 
 const conditionStyle: Record<Cond, string> = {
   Critical: "border-destructive/40 bg-destructive/10 text-destructive",
-  Major: "border-warning/40 bg-warning/10 text-warning",
-  Minor: "border-success/40 bg-success/10 text-success",
+  Warning: "border-warning/40 bg-warning/10 text-warning",
+  Healthy: "border-success/40 bg-success/10 text-success",
 };
 
 const conditionIcon: Record<Cond, typeof CheckCircle2> = {
   Critical: Zap,
-  Major: AlertTriangle,
-  Minor: CheckCircle2,
+  Warning: AlertTriangle,
+  Healthy: CheckCircle2,
 };
 
-const ALL_CONDITIONS: Cond[] = ["Critical", "Major", "Minor"];
+const ALL_CONDITIONS: Cond[] = ["Critical", "Warning", "Healthy"];
 
 export default function AssetsPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -87,7 +134,7 @@ export default function AssetsPage() {
   const [floor, setFloor] = useState("");
   const [zone, setZone] = useState("");
   const [years, setYears] = useState("");
-  const [criticalLevel, setCriticalLevel] = useState<Cond>("Minor"); // State input baru
+  const [criticalLevel, setCriticalLevel] = useState<Cond>("Healthy"); // State input baru
 
   // Fetch Server Pagination Handler
   const fetchAssets = useCallback(async () => {
@@ -97,7 +144,7 @@ export default function AssetsPage() {
         page: currentPage.toString(),
         limit: limit.toString(),
         search: queryStr,
-        conditions: activeConditions.join(",") // Mengirim string "Critical,Major,Minor" ke API
+        conditions: activeConditions.join(",") // Mengirim string "Critical,Warning,Healthy" ke API
       });
 
       const res = await fetch(`/api/assets?${params.toString()}`);
@@ -113,8 +160,7 @@ export default function AssetsPage() {
             name: item.asset_name,
             location: locParts.join(" · "),
             years: y,
-            // 🔴 3. AMBIL LANGSUNG KONDISI DARI KOLOM CRITICAL_LEVEL DATABASE
-            condition: (item.critical_level || "Minor") as Cond,
+            condition: (item.derived_condition || getRulCondition(item.category, y)) as Cond,
             rul: formatYears(y)
           };
         });
@@ -151,7 +197,7 @@ export default function AssetsPage() {
     setFloor("");
     setZone("");
     setYears("");
-    setCriticalLevel("Minor");
+    setCriticalLevel("Healthy");
   };
 
   const onAdd = async (e: React.FormEvent) => {

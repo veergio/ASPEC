@@ -31,15 +31,55 @@ export async function GET(request: NextRequest) {
             queryParams.push(searchWildcard, searchWildcard, searchWildcard);
         }
 
-        // 2. 🔴 FILTER KONDISI: Sekarang murni mencocokkan kolom 'critical_level' riil DB (Critical, Major, Minor)
+        // 2. 🔴 FILTER KONDISI: Sekarang menggunakan RUL Thresholds (Derived Condition)
+        const conditionSql = `
+            CASE 
+                -- Kelompok 1: Safety & Security
+                WHEN category IN ('Sistem Pemadam Kebakaran', 'Sistem Proteksi Kebakaran Aktif', 'Security Sistem') THEN
+                    CASE 
+                        WHEN predicted_rul <= 0.25 THEN 'Critical'
+                        WHEN predicted_rul <= 1.0 THEN 'Warning'
+                        ELSE 'Healthy'
+                    END
+                -- Kelompok 2: IT & Telecom
+                WHEN category IN ('Sistem Telekomunikasi Gedung', 'Pencatatan Meter') THEN
+                    CASE 
+                        WHEN predicted_rul <= 0.5 THEN 'Critical'
+                        WHEN predicted_rul <= 2.0 THEN 'Warning'
+                        ELSE 'Healthy'
+                    END
+                -- Kelompok 3: Core Operations (M&E)
+                WHEN category IN ('Mechanical', 'Electrical', 'Ventilasi Sistem', 'Sistem Transportasi Gedung', 'Sistem Energi') THEN
+                    CASE 
+                        WHEN predicted_rul <= 1.0 THEN 'Critical'
+                        WHEN predicted_rul <= 3.0 THEN 'Warning'
+                        ELSE 'Healthy'
+                    END
+                -- Kelompok 4: Sipil & Plumbing
+                WHEN category IN ('Civil', 'Arsitektur', 'Plumbing', 'Distribusi Air') THEN
+                    CASE 
+                        WHEN predicted_rul <= 2.0 THEN 'Critical'
+                        WHEN predicted_rul <= 5.0 THEN 'Warning'
+                        ELSE 'Healthy'
+                    END
+                -- Kelompok 5: Lainnya (Latihan Balakar)
+                WHEN category = 'Latihan Balakar' THEN
+                    CASE 
+                        WHEN predicted_rul <= 0.5 THEN 'Critical'
+                        WHEN predicted_rul <= 1.5 THEN 'Warning'
+                        ELSE 'Healthy'
+                    END
+                ELSE 'Healthy'
+            END
+        `;
+
         if (conditionsParam) {
             const activeConds = conditionsParam.split(",");
-            // Validasi string untuk mencegah SQL Injection sebelum dimasukkan ke query IN
-            const validConds = activeConds.filter(c => ["Critical", "Major", "Minor"].includes(c));
+            const validConds = activeConds.filter(c => ["Critical", "Warning", "Healthy"].includes(c));
 
             if (validConds.length > 0) {
                 const placeholders = validConds.map(() => "?").join(",");
-                whereClauses.push(`critical_level IN (${placeholders})`);
+                whereClauses.push(`(${conditionSql}) IN (${placeholders})`);
                 queryParams.push(...validConds);
             }
         }
@@ -58,7 +98,7 @@ export async function GET(request: NextRequest) {
         // Urutkan NULL di akhir agar data ber-RUL tampil rapi di atas, dilanjutkan sorting ASC
         const dataParams = [...queryParams, limit, offset];
         const dbAssets = await query<AssetDBRow>(
-            `SELECT asset_id, asset_name, building, floor, zone, predicted_rul, critical_level 
+            `SELECT asset_id, asset_name, building, floor, zone, predicted_rul, critical_level, category, (${conditionSql}) as derived_condition 
              FROM assets 
              ${whereSql}
              ORDER BY CASE WHEN predicted_rul IS NULL THEN 1 ELSE 0 END, predicted_rul ASC
