@@ -1,10 +1,31 @@
-import { Search, Bell, ChevronDown } from "lucide-react";
+"use client";
+import { Search, ChevronDown, LogOut, User } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AspecLogo } from "@/components/aspec-logo";
+import { useAuth, logout } from "@/lib/role";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export function AppTopbar() {
+  const { user, loading } = useAuth();
+
+  const initials = user?.name
+    ? user.name
+      .split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2)
+    : "??";
+
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-card/70 px-4 backdrop-blur-md md:px-6">
       <SidebarTrigger className="md:hidden" />
@@ -26,22 +47,38 @@ export function AppTopbar() {
           </span>
           All Systems Operational
         </div>
-        <button className="relative grid h-10 w-10 place-items-center rounded-full border border-border bg-background/60 text-muted-foreground transition hover:text-foreground">
-          <Bell className="h-4 w-4" />
-          <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-warning" />
-        </button>
-        <div className="flex items-center gap-2 rounded-full border border-border bg-background/60 py-1 pl-1 pr-3">
-          <Avatar className="h-8 w-8">
-            <AvatarFallback className="bg-gradient-to-br from-primary to-cyan text-xs font-semibold text-primary-foreground">
-              AO
-            </AvatarFallback>
-          </Avatar>
-          <div className="hidden flex-col leading-tight md:flex">
-            <span className="text-xs font-medium text-foreground">Aris Operator</span>
-            <span className="text-[10px] text-muted-foreground">Plant Engineer</span>
-          </div>
-          <ChevronDown className="hidden h-4 w-4 text-muted-foreground md:block" />
-        </div>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="flex items-center gap-2 rounded-full border border-border bg-background/60 py-1 pl-1 pr-3 outline-none transition hover:bg-muted/50">
+              <Avatar className="h-8 w-8">
+                <AvatarFallback className="bg-gradient-to-br from-primary to-cyan text-xs font-semibold text-primary-foreground">
+                  {loading ? "..." : initials}
+                </AvatarFallback>
+              </Avatar>
+              <div className="hidden flex-col items-start leading-tight md:flex">
+                <span className="text-xs font-medium text-foreground">
+                  {loading ? "Loading..." : user?.name || "Guest"}
+                </span>
+                <span className="text-[10px] capitalize text-muted-foreground">
+                  {user?.role || "Visitor"}
+                </span>
+              </div>
+              <ChevronDown className="hidden h-4 w-4 text-muted-foreground md:block" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuLabel>My Account</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="cursor-pointer text-critical focus:bg-critical/10 focus:text-critical"
+              onClick={() => logout()}
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              <span>Log out</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   );

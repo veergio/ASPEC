@@ -33,14 +33,12 @@ const managerItems = [
   { title: "Asset Monitoring", url: "/assets", icon: Activity },
   { title: "Asset Details", url: "/asset-details", icon: Boxes },
   // { title: "Reports", url: "/reports", icon: FileBarChart2 },
-  { title: "Settings", url: "/settings", icon: Settings },
 ];
 
 const technicianItems = [
   { title: "Work Report Form", url: "/work-report", icon: ClipboardList },
   { title: "Report History", url: "/report-history", icon: History },
   { title: "Work Replace Form", url: "/work-replace", icon: RefreshCcw },
-  { title: "Settings", url: "/settings", icon: Settings },
 ]
 
 export function AppSidebar() {
