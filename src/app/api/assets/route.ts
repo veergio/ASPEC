@@ -11,10 +11,88 @@ interface AssetDBRow {
     critical_level: string;
 }
 
+interface DistinctStringRow { value: string; }
+interface DistinctNumberRow { value: number; }
+
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
 
+        // ── FITUR 1: Handle Request Dropdown Options (DISTINCT) ──
+        if (searchParams.get("options") === "true") {
+            const [
+                assetTypesResult,
+                buildingsResult,
+                floorsResult,
+                zonesResult,
+                categoriesResult,
+                subCategoriesResult,
+                criticalLevelsResult
+            ] = await Promise.all([
+                query<DistinctStringRow>("SELECT DISTINCT asset_type as value FROM assets WHERE asset_type IS NOT NULL ORDER BY asset_type ASC"),
+                query<DistinctStringRow>("SELECT DISTINCT building as value FROM assets WHERE building IS NOT NULL ORDER BY building ASC"),
+                query<DistinctNumberRow>("SELECT DISTINCT floor as value FROM assets WHERE floor IS NOT NULL ORDER BY floor ASC"),
+                query<DistinctStringRow>("SELECT DISTINCT zone as value FROM assets WHERE zone IS NOT NULL ORDER BY zone ASC"),
+                query<DistinctStringRow>("SELECT DISTINCT category as value FROM assets WHERE category IS NOT NULL ORDER BY category ASC"),
+                query<DistinctStringRow>("SELECT DISTINCT sub_category as value FROM assets WHERE sub_category IS NOT NULL ORDER BY sub_category ASC"),
+                query<DistinctStringRow>("SELECT DISTINCT critical_level as value FROM assets WHERE critical_level IS NOT NULL ORDER BY critical_level ASC")
+            ]);
+
+            return NextResponse.json({
+                success: true,
+                data: {
+                    asset_types: assetTypesResult.map(r => r.value),
+                    buildings: buildingsResult.map(r => r.value),
+                    floors: floorsResult.map(r => r.value),
+                    zones: zonesResult.map(r => r.value),
+                    categories: categoriesResult.map(r => r.value),
+                    sub_categories: subCategoriesResult.map(r => r.value),
+                    critical_levels: criticalLevelsResult.map(r => r.value)
+                }
+            });
+        }
+
+        // ── FITUR 2: Hitung Agregasi Komplain & Biaya Berdasarkan Lokasi & Tipe ──
+        if (searchParams.get("metrics") === "true") {
+            const building = searchParams.get("building") || "";
+            const floor = searchParams.get("floor") ? Number(searchParams.get("floor")) : null;
+            const zone = searchParams.get("zone") || "";
+            const assetType = searchParams.get("type") || "";
+
+            const assetRows = await query<{ asset_id: number }>(
+                `SELECT asset_id FROM assets  WHERE building = ? AND floor <=> ? AND zone <=> ? AND asset_type = ?`,
+                [building, floor, zone, assetType]
+            );
+
+            if (assetRows.length === 0) {
+                return NextResponse.json({
+                    success: true,
+                    data: { total_komplain: 0, total_biaya_perbaikan: 0.0 }
+                });
+            }
+
+            const assetIds = assetRows.map(r => r.asset_id);
+            const placeholders = assetIds.map(() => "?").join(",");
+
+            const metricsResult = await query<{ total_komplain: number; total_biaya: string | null }>(
+                `SELECT 
+                    COUNT(ticket_id) as total_komplain,
+                    SUM(repair_cost) as total_biaya
+                 FROM maintenance_logs 
+                 WHERE asset_id IN (${placeholders})`,
+                assetIds
+            );
+
+            return NextResponse.json({
+                success: true,
+                data: {
+                    total_komplain: metricsResult[0]?.total_komplain ? Number(metricsResult[0].total_komplain) : 0,
+                    total_biaya_perbaikan: metricsResult[0]?.total_biaya ? parseFloat(metricsResult[0].total_biaya) : 0.0
+                }
+            });
+        }
+
+        // ── LOGIKA GET PAGINATED ASSETS (BAWAAN UTAMA) ──
         const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
         const limit = parseInt(searchParams.get("limit") || "10");
         const search = searchParams.get("search")?.trim().toLowerCase() || "";
@@ -24,45 +102,38 @@ export async function GET(request: NextRequest) {
         const queryParams: any[] = [];
         let whereClauses: string[] = [];
 
-        // 1. Filter Search (Nama Asset / Lokasi Gedung / Zona)
         if (search) {
             whereClauses.push("(LOWER(asset_name) LIKE ? OR LOWER(building) LIKE ? OR LOWER(zone) LIKE ?)");
             const searchWildcard = `%${search}%`;
             queryParams.push(searchWildcard, searchWildcard, searchWildcard);
         }
 
-        // 2. 🔴 FILTER KONDISI: Sekarang menggunakan RUL Thresholds (Derived Condition)
         const conditionSql = `
             CASE 
-                -- Kelompok 1: Safety & Security
                 WHEN category IN ('Sistem Pemadam Kebakaran', 'Sistem Proteksi Kebakaran Aktif', 'Security Sistem') THEN
                     CASE 
                         WHEN predicted_rul <= 0.25 THEN 'Critical'
                         WHEN predicted_rul <= 1.0 THEN 'Warning'
                         ELSE 'Healthy'
                     END
-                -- Kelompok 2: IT & Telecom
                 WHEN category IN ('Sistem Telekomunikasi Gedung', 'Pencatatan Meter') THEN
                     CASE 
                         WHEN predicted_rul <= 0.5 THEN 'Critical'
                         WHEN predicted_rul <= 2.0 THEN 'Warning'
                         ELSE 'Healthy'
                     END
-                -- Kelompok 3: Core Operations (M&E)
                 WHEN category IN ('Mechanical', 'Electrical', 'Ventilasi Sistem', 'Sistem Transportasi Gedung', 'Sistem Energi') THEN
                     CASE 
                         WHEN predicted_rul <= 1.0 THEN 'Critical'
                         WHEN predicted_rul <= 3.0 THEN 'Warning'
                         ELSE 'Healthy'
                     END
-                -- Kelompok 4: Sipil & Plumbing
                 WHEN category IN ('Civil', 'Arsitektur', 'Plumbing', 'Distribusi Air') THEN
                     CASE 
                         WHEN predicted_rul <= 2.0 THEN 'Critical'
                         WHEN predicted_rul <= 5.0 THEN 'Warning'
                         ELSE 'Healthy'
                     END
-                -- Kelompok 5: Lainnya (Latihan Balakar)
                 WHEN category = 'Latihan Balakar' THEN
                     CASE 
                         WHEN predicted_rul <= 0.5 THEN 'Critical'
@@ -86,7 +157,6 @@ export async function GET(request: NextRequest) {
 
         const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
-        // ── Query 1: Hitung Total Baris (Penting untuk Pagination) ──────
         const totalCountResult = await query<{ total: number }>(
             `SELECT COUNT(*) as total FROM assets ${whereSql}`,
             queryParams
@@ -94,8 +164,6 @@ export async function GET(request: NextRequest) {
         const totalItems = totalCountResult[0]?.total || 0;
         const totalPages = Math.ceil(totalItems / limit);
 
-        // ── Query 2: Ambil Data Spesifik Halaman Terkait ────────────────
-        // Urutkan NULL di akhir agar data ber-RUL tampil rapi di atas, dilanjutkan sorting ASC
         const dataParams = [...queryParams, limit, offset];
         const dbAssets = await query<AssetDBRow>(
             `SELECT asset_id, asset_name, building, floor, zone, predicted_rul, critical_level, category, (${conditionSql}) as derived_condition 
@@ -125,54 +193,174 @@ export async function GET(request: NextRequest) {
     }
 }
 
-// ── POST: Tambah Asset Baru ke Database ─────────────────────────────
+function formatDateForDB(dateStr: any): string | null {
+    if (!dateStr) return null;
+    let cleanStr = String(dateStr).trim();
+    if (!cleanStr) return null;
+
+    // Check for DD/MM/YYYY or DD-MM-YYYY
+    const dmyRegex = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/;
+    const match = cleanStr.match(dmyRegex);
+    if (match) {
+        const [_, day, month, year, hour = '00', minute = '00', second = '00'] = match;
+        const pad = (s: string) => s.padStart(2, '0');
+        return `${year}-${pad(month)}-${pad(day)} ${pad(hour)}:${pad(minute)}:${pad(second)}`;
+    }
+
+    // Try normal Date parsing
+    const d = new Date(cleanStr);
+    if (!isNaN(d.getTime())) {
+        const pad = (n: number) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    // Fallback: if it's already YYYY-MM-DD format, return it
+    if (/^\d{4}-\d{2}-\d{2}/.test(cleanStr)) {
+        return cleanStr;
+    }
+
+    return null;
+}
+
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { asset_name, building, floor, zone, predicted_rul, critical_level } = body;
 
-        if (!asset_name || !building) {
+        const {
+            asset_name,
+            asset_brand,
+            asset_model,
+            category,
+            sub_category,
+            asset_type,
+            building,
+            floor,
+            zone,
+            critical_level,
+            instalation_date,
+            operational_hours,
+            total_komplain,
+            total_biaya_perbaikan,
+            complaints
+        } = body;
+
+        // Validasi kolom-kolom wajib (sesuai aturan NOT NULL database)
+        if (!asset_name || !asset_type || !category || !building || !floor || !instalation_date) {
             return NextResponse.json(
-                { success: false, message: "Nama asset dan Gedung wajib diisi" },
+                { success: false, message: "Missing required fields (name, type, category, building, floor, instalation_date)" },
                 { status: 400 }
             );
         }
 
+        // 🌟 QUERY INSERT SEKARANG MENCAKUP SEMUA KOLOM DI DATABASE ANDA
         const insertQuery = `
             INSERT INTO assets (
-                asset_name, 
-                building, 
-                floor, 
-                zone, 
-                predicted_rul, 
-                status, 
-                critical_level, 
-                instalation_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+                asset_name, asset_brand, asset_model, category, sub_category, 
+                asset_type, building, floor, zone, critical_level, 
+                instalation_date, operational_hours, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Aktif')
         `;
 
-        const values = [
-            asset_name.trim(),                                      // 1. asset_name
-            building.trim(),                                        // 2. building
-            floor ? Number(floor) : null,                           // 3. floor (Gunakan null jika tidak diisi agar clean)
-            zone ? zone.trim() : null,                              // 4. zone
-            predicted_rul !== undefined && predicted_rul !== "" ? Number(predicted_rul) : null, // 5. predicted_rul
-            "Aktif",                                                // 6. status default untuk data baru
-            critical_level || "Minor"                               // 7. critical_level dikirim dinamis dari form dialog
-        ];
+        const result = await query(insertQuery, [
+            asset_name,
+            asset_brand || null,
+            asset_model || null,
+            category,
+            sub_category || null,
+            asset_type,
+            building,
+            Number(floor),
+            zone || null,
+            critical_level || 'Healthy',
+            typeof instalation_date === 'string' ? instalation_date.split('T')[0] : instalation_date, // Pastikan format DATE murni YYYY-MM-DD
+            operational_hours ? parseFloat(operational_hours) : 0.0
+        ]);
 
-        const result = await query<{ insertId: number }>(insertQuery, values);
-        const insertId = result[0]?.insertId;
+        // mysql2 returns ResultSetHeader for INSERT (not a row array),
+        // but our query() helper casts it as T[]. Access insertId directly.
+        const newAssetId = (result as any).insertId ?? (result as any)[0]?.insertId;
+
+        if (!newAssetId) {
+            throw new Error("Gagal mendapatkan auto_increment ID dari database.");
+        }
+
+        // Insert complaints from CSV if present
+        if (complaints && Array.isArray(complaints) && complaints.length > 0) {
+            for (const comp of complaints) {
+                // technician_id has FK constraint to users table — CSV values won't match, so default to null
+                const technician_id = null;
+                const planned_date = comp.planned_date ? formatDateForDB(comp.planned_date) : null;
+                const started_date = comp.started_date ? formatDateForDB(comp.started_date) : null;
+                const completed_date = comp.completed_date ? formatDateForDB(comp.completed_date) : null;
+                const issue_type = comp.issue_type || null;
+                const severity = comp.severity || null;
+                const root_cause = comp.root_cause || null;
+                const spare_parts_used = comp.spare_parts_used || null;
+                const repair_cost = comp.repair_cost ? parseFloat(comp.repair_cost) : null;
+                const is_embedded = comp.is_embedded !== undefined ? Number(comp.is_embedded) : 0;
+
+                await query(
+                    `INSERT INTO maintenance_logs (
+                        asset_id, technician_id, planned_date, started_date, completed_date,
+                        issue_type, severity, root_cause, spare_parts_used, repair_cost, is_embedded
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        newAssetId,
+                        technician_id,
+                        planned_date,
+                        started_date,
+                        completed_date,
+                        issue_type,
+                        severity,
+                        root_cause,
+                        spare_parts_used,
+                        repair_cost,
+                        is_embedded
+                    ]
+                );
+            }
+        }
+
+        // Hit External API (FastAPI) untuk menghitung RUL dan mengupdate DB secara internal
+        const aiEngineUrl = "http://localhost:8000/api/predict-rul";
+
+        const aiResponse = await fetch(aiEngineUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                asset_id: newAssetId,
+                Tipe: asset_type,
+                "Lokasi Gedung": building,
+                "Lokasi Lantai": Number(floor),
+                "Lokasi Zona": zone || "",
+                Operating_Hours: operational_hours ? parseFloat(operational_hours) : 0.0,
+                "Total komplain": Number(total_komplain || 0),
+                "Total biaya perbaikan": parseFloat(total_biaya_perbaikan || 0)
+            })
+        });
+
+        const aiData = await aiResponse.json();
+
+        if (!aiResponse.ok) {
+            console.error("[AI_ENGINE_WARNING]", aiData);
+            return NextResponse.json({
+                success: true,
+                asset_id: newAssetId,
+                message: "Asset berhasil dibuat, tetapi gagal memicu kalkulasi otomatis AI Engine."
+            });
+        }
 
         return NextResponse.json({
             success: true,
-            message: "Asset berhasil disimpan",
-            asset_id: insertId,
+            asset_id: newAssetId,
+            predicted_rul: aiData.predicted_rul,
+            message: "Asset berhasil ditambahkan dan nilai RUL berhasil diprediksi oleh AI Engine!"
         });
-    } catch (error) {
+
+    } catch (error: any) {
         console.error("[POST_ASSET_ERROR]", error);
         return NextResponse.json(
-            { success: false, message: "Internal server error saat menyimpan asset" },
+            { success: false, message: error.message || "Gagal menyimpan asset baru" },
             { status: 500 }
         );
     }

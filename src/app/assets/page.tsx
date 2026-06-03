@@ -31,10 +31,20 @@ type Asset = {
   rul: string;
 };
 
+// 🌟 Ditambahkan sesuai struktur return FITUR 1 GET database terupdate
+interface DropdownOptions {
+  asset_types: string[];
+  buildings: string[];
+  floors: number[];
+  zones: string[];
+  categories: string[];
+  sub_categories: string[];
+  critical_levels: string[];
+}
+
 function getRulCondition(category: string, rul: number | null): Cond {
   if (rul === null) return "Healthy";
 
-  // Kelompok 1: Safety & Security
   if (
     category === "Sistem Pemadam Kebakaran" ||
     category === "Sistem Proteksi Kebakaran Aktif" ||
@@ -45,7 +55,6 @@ function getRulCondition(category: string, rul: number | null): Cond {
     return "Healthy";
   }
 
-  // Kelompok 2: IT & Telecom
   if (
     category === "Sistem Telekomunikasi Gedung" ||
     category === "Pencatatan Meter"
@@ -55,7 +64,6 @@ function getRulCondition(category: string, rul: number | null): Cond {
     return "Healthy";
   }
 
-  // Kelompok 3: Core Operations (M&E)
   if (
     category === "Mechanical" ||
     category === "Electrical" ||
@@ -68,7 +76,6 @@ function getRulCondition(category: string, rul: number | null): Cond {
     return "Healthy";
   }
 
-  // Kelompok 4: Sipil & Plumbing
   if (
     category === "Civil" ||
     category === "Arsitektur" ||
@@ -80,7 +87,6 @@ function getRulCondition(category: string, rul: number | null): Cond {
     return "Healthy";
   }
 
-  // Kelompok 5: Lainnya
   if (category === "Latihan Balakar") {
     if (rul <= 0.5) return "Critical";
     if (rul <= 1.5) return "Warning";
@@ -114,6 +120,104 @@ const conditionIcon: Record<Cond, typeof CheckCircle2> = {
 
 const ALL_CONDITIONS: Cond[] = ["Critical", "Warning", "Healthy"];
 
+function splitCSVLine(line: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      result.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+function parseRepairCost(val: any): number {
+  if (val === undefined || val === null) return 0;
+  const s = String(val).trim();
+  if (!s) return 0;
+
+  // Clean prefix and keep numbers, dots, commas, and minus signs
+  let clean = s.replace(/[^0-9\.,\-]/g, '');
+
+  const lastDot = clean.lastIndexOf('.');
+  const lastComma = clean.lastIndexOf(',');
+
+  if (lastComma > lastDot) {
+    // Indonesian format: 1.000.000,50 -> 1000000.50
+    clean = clean.replace(/\./g, '').replace(/,/g, '.');
+  } else if (lastDot > lastComma) {
+    // US format: 1,000,000.50 -> 1000000.50
+    clean = clean.replace(/,/g, '');
+  } else {
+    // Only one type of separator or none
+    if (clean.includes(',')) {
+      const parts = clean.split(',');
+      if (parts.length > 2 || parts[1].length === 3) {
+        clean = clean.replace(/,/g, '');
+      } else {
+        clean = clean.replace(/,/g, '.');
+      }
+    }
+  }
+
+  const parsed = parseFloat(clean);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+function parseClientCSV(text: string): any[] {
+  const lines = text.split(/\r?\n/);
+  if (lines.length === 0 || !lines[0].trim()) return [];
+
+  const headers = splitCSVLine(lines[0]).map(h => h.trim().toLowerCase().replace(/^["']|["']$/g, ''));
+  const rows: any[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const values = splitCSVLine(line);
+    const rowObj: any = {};
+    headers.forEach((header, idx) => {
+      const val = values[idx] !== undefined ? values[idx].trim().replace(/^["']|["']$/g, '') : '';
+      rowObj[header] = val;
+    });
+
+    const findValue = (keys: string[]) => {
+      for (const k of keys) {
+        if (rowObj[k] !== undefined) return rowObj[k];
+        const spaceK = k.replace(/_/g, ' ');
+        if (rowObj[spaceK] !== undefined) return rowObj[spaceK];
+      }
+      return undefined;
+    };
+
+    const rawCost = findValue(['repair_cost', 'cost', 'repair cost', 'biaya', 'biaya perbaikan']);
+    const normalized: any = {
+      technician_id: findValue(['technician_id', 'technician', 'technician id']),
+      planned_date: findValue(['planned_date', 'planned', 'planned date', 'planned_date_time']),
+      started_date: findValue(['started_date', 'started', 'started date', 'started_date_time']),
+      completed_date: findValue(['completed_date', 'completed', 'completed date', 'completed_date_time']),
+      issue_type: findValue(['issue_type', 'issue', 'issue type', 'complaint_type', 'complaint type']),
+      severity: findValue(['severity']),
+      root_cause: findValue(['root_cause', 'root cause', 'cause']),
+      spare_parts_used: findValue(['spare_parts_used', 'spare parts', 'spare parts used', 'parts']),
+      repair_cost: rawCost ? parseRepairCost(rawCost) : 0,
+      is_embedded: findValue(['is_embedded', 'embedded']) ?? 0
+    };
+
+    rows.push(normalized);
+  }
+  return rows;
+}
+
 export default function AssetsPage() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loadingFetch, setLoadingFetch] = useState(true);
@@ -122,19 +226,48 @@ export default function AssetsPage() {
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // State untuk Dropdown Distinct dari Backend
+  const [loadingOptions, setLoadingOptions] = useState(false);
+  const [options, setOptions] = useState<DropdownOptions>({
+    asset_types: [],
+    buildings: [],
+    floors: [],
+    zones: [],
+    categories: [],
+    sub_categories: [],
+    critical_levels: []
+  });
+
+  // State untuk Live Metrics Otomatis
+  const [totalKomplain, setTotalKomplain] = useState<number>(0);
+  const [totalBiayaPerbaikan, setTotalBiayaPerbaikan] = useState<number>(0);
+  const [loadingMetrics, setLoadingMetrics] = useState(false);
+
+  // State untuk tracking baseline historical dan CSV upload
+  const [historicalKomplain, setHistoricalKomplain] = useState<number>(0);
+  const [historicalBiaya, setHistoricalBiaya] = useState<number>(0);
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csvRows, setCsvRows] = useState<any[]>([]);
+
   // Pagination Server States
   const [currentPage, setCurrentPage] = useState(1);
   const [limit, setLimit] = useState(10);
   const [totalPages, setTotalPages] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
 
-  // Form States
-  const [name, setName] = useState("");
+  // 🌟 Form States Lengkap Sesuai Struktur MariaDB & Backend BE Next.js
+  const [assetName, setAssetName] = useState("");
+  const [assetBrand, setAssetBrand] = useState("");
+  const [assetModel, setAssetModel] = useState("");
+  const [category, setCategory] = useState("");
+  const [subCategory, setSubCategory] = useState("");
+  const [assetType, setAssetType] = useState("");
   const [building, setBuilding] = useState("");
   const [floor, setFloor] = useState("");
   const [zone, setZone] = useState("");
-  const [years, setYears] = useState("");
-  const [criticalLevel, setCriticalLevel] = useState<Cond>("Healthy"); // State input baru
+  const [criticalLevel, setCriticalLevel] = useState("");
+  const [instalationDate, setInstalationDate] = useState("");
+  const [operatingHours, setOperatingHours] = useState("");
 
   // Fetch Server Pagination Handler
   const fetchAssets = useCallback(async () => {
@@ -144,7 +277,7 @@ export default function AssetsPage() {
         page: currentPage.toString(),
         limit: limit.toString(),
         search: queryStr,
-        conditions: activeConditions.join(",") // Mengirim string "Critical,Warning,Healthy" ke API
+        conditions: activeConditions.join(",")
       });
 
       const res = await fetch(`/api/assets?${params.toString()}`);
@@ -157,7 +290,7 @@ export default function AssetsPage() {
 
           return {
             id: item.asset_id,
-            name: item.asset_name,
+            name: item.asset_name || `Asset #${item.asset_id}`,
             location: locParts.join(" · "),
             years: y,
             condition: (item.derived_condition || getRulCondition(item.category, y)) as Cond,
@@ -174,6 +307,103 @@ export default function AssetsPage() {
       setLoadingFetch(false);
     }
   }, [currentPage, limit, queryStr, activeConditions]);
+
+  // Hook: Fetch Opsi Dropdown Unik saat Dialog Dibuka
+  useEffect(() => {
+    const fetchDropdownOptions = async () => {
+      setLoadingOptions(true);
+      try {
+        const res = await fetch("/api/assets?options=true");
+        const json = await res.json();
+        if (json.success && json.data) {
+          setOptions(json.data);
+        }
+      } catch {
+        toast.error("Gagal memuat daftar pilihan lokasi dan jenis asset");
+      } finally {
+        setLoadingOptions(false);
+      }
+    };
+
+    if (open) {
+      fetchDropdownOptions();
+    }
+  }, [open]);
+
+  // Hook: Mengambil Metrik Log Pemeliharaan Otomatis Saat Dropdown Terisi Lengkap
+  useEffect(() => {
+    const fetchAutomatedMetrics = async () => {
+      if (!building || !floor || !assetType) return;
+
+      setLoadingMetrics(true);
+      try {
+        const params = new URLSearchParams({
+          metrics: "true",
+          building: building,
+          floor: floor,
+          zone: zone || "",
+          type: assetType
+        });
+
+        const res = await fetch(`/api/assets?${params.toString()}`);
+        const json = await res.json();
+
+        if (json.success && json.data) {
+          const histKomplain = json.data.total_komplain;
+          const histBiaya = json.data.total_biaya_perbaikan;
+          setHistoricalKomplain(histKomplain);
+          setHistoricalBiaya(histBiaya);
+
+          const csvCount = csvRows.length;
+          const csvCost = csvRows.reduce((sum, row) => sum + (parseFloat(row.repair_cost) || 0), 0);
+
+          setTotalKomplain(histKomplain + csvCount);
+          setTotalBiayaPerbaikan(histBiaya + csvCost);
+        }
+      } catch (err) {
+        console.error("Gagal memuat otomatis data log maintenance", err);
+      } finally {
+        setLoadingMetrics(false);
+      }
+    };
+
+    fetchAutomatedMetrics();
+  }, [building, floor, zone, assetType, csvRows.length]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      setCsvFile(null);
+      setCsvRows([]);
+      setTotalKomplain(historicalKomplain);
+      setTotalBiayaPerbaikan(historicalBiaya);
+      return;
+    }
+
+    setCsvFile(file);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (!text) return;
+
+      try {
+        const parsed = parseClientCSV(text);
+        setCsvRows(parsed);
+
+        const count = parsed.length;
+        const cost = parsed.reduce((sum, row) => sum + (parseFloat(row.repair_cost) || 0), 0);
+
+        setTotalKomplain(historicalKomplain + count);
+        setTotalBiayaPerbaikan(historicalBiaya + cost);
+        toast.success(`Berhasil memuat ${count} log komplain dari CSV.`);
+      } catch (err) {
+        console.error(err);
+        toast.error("Gagal membaca file CSV. Pastikan format valid.");
+      }
+    };
+    reader.readAsText(file);
+  };
 
   useEffect(() => {
     fetchAssets();
@@ -192,48 +422,79 @@ export default function AssetsPage() {
   };
 
   const resetForm = () => {
-    setName("");
+    setAssetName("");
+    setAssetBrand("");
+    setAssetModel("");
+    setCategory("");
+    setSubCategory("");
+    setAssetType("");
     setBuilding("");
     setFloor("");
     setZone("");
-    setYears("");
-    setCriticalLevel("Healthy");
+    setCriticalLevel("");
+    setInstalationDate("");
+    setOperatingHours("");
+    setTotalKomplain(0);
+    setTotalBiayaPerbaikan(0);
+    setHistoricalKomplain(0);
+    setHistoricalBiaya(0);
+    setCsvFile(null);
+    setCsvRows([]);
+    const input = document.getElementById("complaint-csv") as HTMLInputElement;
+    if (input) input.value = "";
   };
 
   const onAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    const y = years ? Number(years) : null;
-    if (!name.trim() || !building.trim()) {
-      toast.error("Lengkapi semua field wajib dengan benar");
+
+    if (!assetName || !assetType || !category || !building || !floor || !instalationDate) {
+      toast.error("Lengkapi seluruh field wajib (tanda bintang *) terlebih dahulu");
       return;
     }
 
     setSubmitting(true);
     try {
+      // 🌟 PERBAIKAN UTAMA: Tembak ke Internal Route Next.js agar di-INSERT ke DB terlebih dahulu
       const res = await fetch("/api/assets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          asset_name: name,
-          building,
-          floor: floor ? Number(floor) : null,
-          zone: zone || null,
-          predicted_rul: y,
-          critical_level: criticalLevel // Kirim level kekritisan yang dipilih
+          asset_name: assetName,
+          asset_brand: assetBrand,
+          asset_model: assetModel,
+          category: category,
+          sub_category: subCategory,
+          asset_type: assetType,
+          building: building,
+          floor: Number(floor),
+          zone: zone || "",
+          critical_level: criticalLevel,
+          instalation_date: instalationDate,
+          operational_hours: operatingHours ? parseFloat(operatingHours) : 0.0,
+          total_komplain: totalKomplain,
+          total_biaya_perbaikan: totalBiayaPerbaikan,
+          complaints: csvRows
         })
       });
-      const data = await res.json();
 
-      if (data.success) {
-        toast.success("Asset berhasil ditambahkan");
-        fetchAssets();
-        resetForm();
-        setOpen(false);
-      } else {
-        toast.error(data.message || "Gagal menyimpan");
+      const rawData = await res.json();
+
+      if (!res.ok || !rawData.success) {
+        throw new Error(rawData?.message || "Internal server gagal memproses penambahan aset");
       }
-    } catch {
-      toast.error("Terjadi kesalahan jaringan");
+
+      const formattedRul = formatYears(rawData?.predicted_rul !== undefined ? Number(rawData.predicted_rul) : null);
+      toast.success(rawData.predicted_rul !== undefined
+        ? `Aset Berhasil Disimpan! Prediksi RUL AI Engine: ${formattedRul}`
+        : `${rawData.message}`
+      );
+
+      fetchAssets();
+      resetForm();
+      setOpen(false);
+    } catch (error: any) {
+      console.error("[NEXTJS_POST_ERROR]", error);
+      toast.error(error.message || "Terjadi kesalahan saat menyimpan aset");
     } finally {
       setSubmitting(false);
     }
@@ -251,63 +512,264 @@ export default function AssetsPage() {
                 <Plus className="mr-2 h-4 w-4" /> Add Asset
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
+            <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Tambah Asset Baru</DialogTitle>
                 <DialogDescription>
-                  Masukkan koordinat penempatan asset untuk sinkronisasi monitoring dashboard ASPEC.
+                  Masukkan spesifikasi komponen dan koordinat lokasi untuk memicu kalkulasi prediktif RUL.
                 </DialogDescription>
               </DialogHeader>
-              <form onSubmit={onAdd} className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="asset-name">Nama Asset</Label>
-                  <Input id="asset-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. PER-58KX-0009" required />
+
+              {loadingOptions ? (
+                <div className="flex flex-col items-center justify-center p-12 space-y-2">
+                  <Loader2 className="h-7 w-7 animate-spin text-cyan" />
+                  <p className="text-xs text-muted-foreground animate-pulse">Menghubungkan opsi database...</p>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+              ) : (
+                <form onSubmit={onAdd} className="space-y-4 pt-2">
+
+                  {/* Row 1: Nama Aset (Kustom Input Manual) */}
                   <div className="space-y-1.5">
-                    <Label htmlFor="building">Gedung</Label>
-                    <Input id="building" value={building} onChange={(e) => setBuilding(e.target.value)} placeholder="Gedung A" required />
+                    <Label htmlFor="asset-name">Nama Asset <span className="text-destructive">*</span></Label>
+                    <Input
+                      id="asset-name"
+                      value={assetName}
+                      onChange={(e) => setAssetName(e.target.value)}
+                      placeholder="mis. AC Split Ruang Server Utama"
+                      required
+                    />
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="floor">Lantai</Label>
-                    <Input id="floor" type="number" value={floor} onChange={(e) => setFloor(e.target.value)} placeholder="2" />
+
+                  {/* Row 2: Brand & Model */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="asset-brand">Brand / Merk</Label>
+                      <Input
+                        id="asset-brand"
+                        value={assetBrand}
+                        onChange={(e) => setAssetBrand(e.target.value)}
+                        placeholder="mis. Daikin"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="asset-model">Model / Tipe Seri</Label>
+                      <Input
+                        id="asset-model"
+                        value={assetModel}
+                        onChange={(e) => setAssetModel(e.target.value)}
+                        placeholder="mis. FTNE15MV14"
+                      />
+                    </div>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="zone">Zona / Bay</Label>
-                    <Input id="zone" value={zone} onChange={(e) => setZone(e.target.value)} placeholder="Timur" />
+
+                  {/* Row 3: Category & Sub Category (Dynamic Dropdown) */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="category">Category <span className="text-destructive">*</span></Label>
+                      <Select value={category} onValueChange={setCategory} required>
+                        <SelectTrigger id="category">
+                          <SelectValue placeholder="Pilih Kategori" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-52">
+                          {options.categories.map((cat) => (
+                            <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="sub-category">Sub Category</Label>
+                      <Select value={subCategory} onValueChange={setSubCategory}>
+                        <SelectTrigger id="sub-category">
+                          <SelectValue placeholder="Pilih Sub Kategori" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-52">
+                          {options.sub_categories.map((sub) => (
+                            <SelectItem key={sub} value={sub}>{sub}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
+
+                  {/* Row 4: Tipe Asset (Untuk keperluan AI Feature Engine) */}
                   <div className="space-y-1.5">
-                    <Label htmlFor="asset-years">ML Predicted RUL (tahun)</Label>
-                    <Input id="asset-years" type="number" step="0.1" min="0" value={years} onChange={(e) => setYears(e.target.value)} placeholder="Kosongkan jika NULL" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="critical-level">Critical Level</Label>
-                    <Select value={criticalLevel} onValueChange={(val) => setCriticalLevel(val as Cond)}>
-                      <SelectTrigger id="critical-level">
-                        <SelectValue />
+                    <Label htmlFor="asset-type">Tipe Asset <span className="text-destructive">*</span></Label>
+                    <Select value={assetType} onValueChange={setAssetType} required>
+                      <SelectTrigger id="asset-type">
+                        <SelectValue placeholder="Pilih Tipe Spek Aset" />
                       </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Minor">Minor</SelectItem>
-                        <SelectItem value="Major">Major</SelectItem>
-                        <SelectItem value="Critical">Critical</SelectItem>
+                      <SelectContent className="max-h-48">
+                        {options.asset_types.map((type) => (
+                          <SelectItem key={type} value={type}>{type}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
-                </div>
-                <DialogFooter>
-                  <Button type="button" variant="outline" disabled={submitting} onClick={() => { resetForm(); setOpen(false); }}>Batal</Button>
-                  <Button type="submit" disabled={submitting} className="bg-gradient-to-r from-primary to-cyan text-primary-foreground">
-                    {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Simpan Asset"}
-                  </Button>
-                </DialogFooter>
-              </form>
+
+                  {/* Row 5: Grid Geografis Lokasi */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="building">Gedung <span className="text-destructive">*</span></Label>
+                      <Select value={building} onValueChange={setBuilding} required>
+                        <SelectTrigger id="building">
+                          <SelectValue placeholder="Pilih" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {options.buildings.map((b) => (
+                            <SelectItem key={b} value={b}>{b}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="floor">Lantai <span className="text-destructive">*</span></Label>
+                      <Select value={floor} onValueChange={setFloor} required>
+                        <SelectTrigger id="floor">
+                          <SelectValue placeholder="Pilih" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-48">
+                          {options.floors.map((f) => (
+                            <SelectItem key={String(f)} value={String(f)}>Lantai {f}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="zone">Zona / Bay</Label>
+                      <Select value={zone} onValueChange={setZone}>
+                        <SelectTrigger id="zone">
+                          <SelectValue placeholder="Pilih" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {options.zones.map((z) => (
+                            <SelectItem key={z} value={z}>{z}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Row 6: Tanggal Instalasi & Initial Critical Level */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="instalation-date">Tanggal Instalasi <span className="text-destructive">*</span></Label>
+                      <Input
+                        id="instalation-date"
+                        type="date"
+                        value={instalationDate}
+                        onChange={(e) => setInstalationDate(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="critical-level">Initial Assessment Level</Label>
+                      <Select value={criticalLevel} onValueChange={setCriticalLevel}>
+                        <SelectTrigger id="critical-level">
+                          <SelectValue placeholder="Healthy (Bawaan)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {options.critical_levels.map((lvl) => (
+                            <SelectItem key={lvl} value={lvl}>{lvl}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Row 7: Operating Hours */}
+                  <div className="space-y-1.5">
+                    <Label htmlFor="operating-hours">Operating Hours Tracker</Label>
+                    <Input
+                      id="operating-hours"
+                      type="number"
+                      step="0.1"
+                      value={operatingHours}
+                      onChange={(e) => setOperatingHours(e.target.value)}
+                      placeholder="mis. 3450.2"
+                      required
+                    />
+                  </div>
+
+                  {/* CSV File Input */}
+                  <div className="space-y-1.5">
+                    <Label htmlFor="complaint-csv">Upload Complaint CSV (Opsional)</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="complaint-csv"
+                        type="file"
+                        accept=".csv"
+                        onChange={handleFileChange}
+                        className="file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
+                      />
+                      {csvFile && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setCsvFile(null);
+                            setCsvRows([]);
+                            setTotalKomplain(historicalKomplain);
+                            setTotalBiayaPerbaikan(historicalBiaya);
+                            const input = document.getElementById("complaint-csv") as HTMLInputElement;
+                            if (input) input.value = "";
+                          }}
+                          className="text-xs text-destructive hover:text-destructive/80"
+                        >
+                          Hapus
+                        </Button>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      Format kolom CSV yang didukung: repair_cost, planned_date, started_date, completed_date, issue_type, severity, root_cause, spare_parts_used.
+                    </p>
+                  </div>
+
+                  {/* Live Metrics Preview Section */}
+                  {(building && floor && assetType) && (
+                    <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-2 text-xs">
+                      <div className="font-semibold text-muted-foreground tracking-wide uppercase text-[10px]">
+                        Historical Maintenance Metrics (Automated)
+                      </div>
+                      {loadingMetrics ? (
+                        <div className="flex items-center space-x-2 text-muted-foreground py-1">
+                          <Loader2 className="h-3 w-3 animate-spin text-cyan" />
+                          <span>Mengkalkulasi log database...</span>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-4 pt-1">
+                          <div>
+                            <span className="text-muted-foreground block">Total Komplain:</span>
+                            <span className="font-medium text-foreground text-sm">{totalKomplain} Tiket</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground block">Total Biaya Perbaikan:</span>
+                            <span className="font-medium text-foreground text-sm">
+                              Rp {totalBiayaPerbaikan.toLocaleString("id-ID", { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <DialogFooter className="pt-2">
+                    <Button type="button" variant="outline" disabled={submitting || loadingMetrics} onClick={() => { resetForm(); setOpen(false); }}>Batal</Button>
+                    <Button type="submit" disabled={submitting || loadingMetrics} className="bg-gradient-to-r from-primary to-cyan text-primary-foreground">
+                      {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Simpan & Prediksi RUL"}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              )}
             </DialogContent>
           </Dialog>
         }
       />
 
+      {/* Sisa code Card, Table, dan Pagination tetap sama karena sudah bekerja dengan baik */}
       <Card className="border-border bg-card">
         <CardContent className="p-0">
           <div className="flex flex-wrap items-center gap-3 border-b border-border p-4">
