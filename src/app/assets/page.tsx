@@ -18,8 +18,13 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { format } from "date-fns";
 import { Filter, Plus, Search, CheckCircle2, AlertTriangle, Zap, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
+import { Progress } from "@/components/ui/progress";
+import { cn } from "@/lib/utils";
 
 type Cond = "Critical" | "Warning" | "Healthy";
 type Asset = {
@@ -225,6 +230,8 @@ export default function AssetsPage() {
   const [activeConditions, setActiveConditions] = useState<Cond[]>(ALL_CONDITIONS);
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
+  const [resultData, setResultData] = useState<any>(null);
 
   // State untuk Dropdown Distinct dari Backend
   const [loadingOptions, setLoadingOptions] = useState(false);
@@ -268,6 +275,13 @@ export default function AssetsPage() {
   const [criticalLevel, setCriticalLevel] = useState("");
   const [instalationDate, setInstalationDate] = useState("");
   const [operatingHours, setOperatingHours] = useState("");
+
+  // Complaint Entry States
+  const [complaintMode, setComplaintMode] = useState<"csv" | "manual">("manual");
+  const [manualComplaints, setManualComplaints] = useState<any[]>([
+    { issueType: "", severity: "", rootCause: "", spareParts: "", repairCost: "" }
+  ]);
+  const [activeComplaintTab, setActiveComplaintTab] = useState("0");
 
   // Fetch Server Pagination Handler
   const fetchAssets = useCallback(async () => {
@@ -354,11 +368,15 @@ export default function AssetsPage() {
           setHistoricalKomplain(histKomplain);
           setHistoricalBiaya(histBiaya);
 
-          const csvCount = csvRows.length;
-          const csvCost = csvRows.reduce((sum, row) => sum + (parseFloat(row.repair_cost) || 0), 0);
+          const csvCount = complaintMode === "csv" ? csvRows.length : 0;
+          const csvCost = complaintMode === "csv" ? csvRows.reduce((sum, row) => sum + (parseFloat(row.repair_cost) || 0), 0) : 0;
 
-          setTotalKomplain(histKomplain + csvCount);
-          setTotalBiayaPerbaikan(histBiaya + csvCost);
+          const validManuals = complaintMode === "manual" ? manualComplaints.filter(c => c.issueType) : [];
+          const manualCount = validManuals.length;
+          const manualCost = validManuals.reduce((sum, c) => sum + parseRepairCost(c.repairCost), 0);
+
+          setTotalKomplain(histKomplain + csvCount + manualCount);
+          setTotalBiayaPerbaikan(histBiaya + csvCost + manualCost);
         }
       } catch (err) {
         console.error("Gagal memuat otomatis data log maintenance", err);
@@ -368,7 +386,7 @@ export default function AssetsPage() {
     };
 
     fetchAutomatedMetrics();
-  }, [building, floor, zone, assetType, csvRows.length]);
+  }, [building, floor, zone, assetType, csvRows.length, complaintMode, manualComplaints]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -440,6 +458,9 @@ export default function AssetsPage() {
     setHistoricalBiaya(0);
     setCsvFile(null);
     setCsvRows([]);
+    setComplaintMode("manual");
+    setManualComplaints([{ issueType: "", severity: "", rootCause: "", spareParts: "", repairCost: "" }]);
+    setActiveComplaintTab("0");
     const input = document.getElementById("complaint-csv") as HTMLInputElement;
     if (input) input.value = "";
   };
@@ -454,6 +475,20 @@ export default function AssetsPage() {
 
     setSubmitting(true);
     try {
+      const complaintsToSubmit = complaintMode === "csv"
+        ? csvRows
+        : manualComplaints
+          .filter(c => c.issueType)
+          .map(c => ({
+            issue_type: c.issueType,
+            severity: c.severity,
+            root_cause: c.rootCause,
+            spare_parts_used: c.spareParts,
+            repair_cost: parseRepairCost(c.repairCost),
+            completed_date: new Date().toISOString().split('T')[0],
+            is_embedded: 0
+          }));
+
       // 🌟 PERBAIKAN UTAMA: Tembak ke Internal Route Next.js agar di-INSERT ke DB terlebih dahulu
       const res = await fetch("/api/assets", {
         method: "POST",
@@ -473,7 +508,7 @@ export default function AssetsPage() {
           operational_hours: operatingHours ? parseFloat(operatingHours) : 0.0,
           total_komplain: totalKomplain,
           total_biaya_perbaikan: totalBiayaPerbaikan,
-          complaints: csvRows
+          complaints: complaintsToSubmit
         })
       });
 
@@ -484,6 +519,18 @@ export default function AssetsPage() {
       }
 
       const formattedRul = formatYears(rawData?.predicted_rul !== undefined ? Number(rawData.predicted_rul) : null);
+
+      // Simpan data untuk ditampilkan di popup ringkasan
+      setResultData({
+        name: assetName,
+        id: rawData.asset_id,
+        category: category,
+        location: `${building} · ${floor} · ${zone}`,
+        predicted_rul: rawData.predicted_rul,
+        instalation_date: instalationDate,
+        condition: getRulCondition(category, rawData.predicted_rul)
+      });
+
       toast.success(rawData.predicted_rul !== undefined
         ? `Aset Berhasil Disimpan! Prediksi RUL AI Engine: ${formattedRul}`
         : `${rawData.message}`
@@ -492,6 +539,7 @@ export default function AssetsPage() {
       fetchAssets();
       resetForm();
       setOpen(false);
+      setResultOpen(true);
     } catch (error: any) {
       console.error("[NEXTJS_POST_ERROR]", error);
       toast.error(error.message || "Terjadi kesalahan saat menyimpan aset");
@@ -693,39 +741,183 @@ export default function AssetsPage() {
                     />
                   </div>
 
-                  {/* CSV File Input */}
-                  <div className="space-y-1.5">
-                    <Label htmlFor="complaint-csv">Upload Complaint CSV (Opsional)</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        id="complaint-csv"
-                        type="file"
-                        accept=".csv"
-                        onChange={handleFileChange}
-                        className="file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
-                      />
-                      {csvFile && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setCsvFile(null);
-                            setCsvRows([]);
-                            setTotalKomplain(historicalKomplain);
-                            setTotalBiayaPerbaikan(historicalBiaya);
-                            const input = document.getElementById("complaint-csv") as HTMLInputElement;
-                            if (input) input.value = "";
-                          }}
-                          className="text-xs text-destructive hover:text-destructive/80"
-                        >
-                          Hapus
-                        </Button>
-                      )}
-                    </div>
-                    <p className="text-[10px] text-muted-foreground">
-                      Format kolom CSV yang didukung: repair_cost, planned_date, started_date, completed_date, issue_type, severity, root_cause, spare_parts_used.
-                    </p>
+                  {/* Complaint Entry Section with Tabs */}
+                  <div className="space-y-3 pt-2 border-t border-border/50">
+                    <Label className="text-sm font-semibold text-primary/80">Riwayat Komplain & Perbaikan</Label>
+                    <Tabs value={complaintMode} onValueChange={(v) => setComplaintMode(v as any)} className="w-full">
+                      <TabsList className="grid w-full grid-cols-2 h-9">
+                        <TabsTrigger value="manual" className="text-xs">Form Manual</TabsTrigger>
+                        <TabsTrigger value="csv" className="text-xs">Upload CSV</TabsTrigger>
+                      </TabsList>
+
+                      <TabsContent value="manual" className="space-y-4 mt-3 animate-in fade-in-50 duration-300">
+                        <Tabs value={activeComplaintTab} onValueChange={setActiveComplaintTab} className="w-full">
+                          <div className="flex items-center gap-2 mb-2 overflow-x-auto pb-1 no-scrollbar">
+                            <TabsList className="h-8 justify-start bg-transparent p-0 gap-1">
+                              {manualComplaints.map((_, idx) => (
+                                <TabsTrigger
+                                  key={idx}
+                                  value={String(idx)}
+                                  className="data-[state=active]:bg-muted px-3 text-[10px] h-7 border border-border"
+                                >
+                                  C-{idx + 1}
+                                </TabsTrigger>
+                              ))}
+                            </TabsList>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              className="h-7 w-7 rounded-md shrink-0 border-dashed"
+                              onClick={() => {
+                                setManualComplaints([...manualComplaints, { issueType: "", severity: "", rootCause: "", spareParts: "", repairCost: "" }]);
+                                setActiveComplaintTab(String(manualComplaints.length));
+                              }}
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+
+                          {manualComplaints.map((complaint, idx) => (
+                            <TabsContent key={idx} value={String(idx)} className="space-y-3 mt-0">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-tight">Data Komplain #{idx + 1}</span>
+                                {manualComplaints.length > 1 && (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 px-2 text-destructive hover:bg-destructive/10 text-[10px]"
+                                    onClick={() => {
+                                      const newComplaints = manualComplaints.filter((_, i) => i !== idx);
+                                      setManualComplaints(newComplaints);
+                                      setActiveComplaintTab("0");
+                                    }}
+                                  >
+                                    Hapus
+                                  </Button>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1.5">
+                                  <Label htmlFor={`manual-issue-${idx}`}>Jenis Kerusakan</Label>
+                                  <Input
+                                    id={`manual-issue-${idx}`}
+                                    value={complaint.issueType}
+                                    onChange={(e) => {
+                                      const newComplaints = [...manualComplaints];
+                                      newComplaints[idx].issueType = e.target.value;
+                                      setManualComplaints(newComplaints);
+                                    }}
+                                    placeholder="mis. Kebocoran Freon"
+                                    className="h-9 text-xs"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label htmlFor={`manual-severity-${idx}`}>Severity</Label>
+                                  <Select
+                                    value={complaint.severity}
+                                    onValueChange={(v) => {
+                                      const newComplaints = [...manualComplaints];
+                                      newComplaints[idx].severity = v;
+                                      setManualComplaints(newComplaints);
+                                    }}
+                                  >
+                                    <SelectTrigger id={`manual-severity-${idx}`} className="h-9 text-xs">
+                                      <SelectValue placeholder="Pilih" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="Low">Low</SelectItem>
+                                      <SelectItem value="Medium">Medium</SelectItem>
+                                      <SelectItem value="High">High</SelectItem>
+                                      <SelectItem value="Critical">Critical</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label htmlFor={`manual-cause-${idx}`}>Akar Masalah (Root Cause)</Label>
+                                <Textarea
+                                  id={`manual-cause-${idx}`}
+                                  value={complaint.rootCause}
+                                  onChange={(e) => {
+                                    const newComplaints = [...manualComplaints];
+                                    newComplaints[idx].rootCause = e.target.value;
+                                    setManualComplaints(newComplaints);
+                                  }}
+                                  placeholder="Jelaskan penyebab kerusakan..."
+                                  className="min-h-[60px] text-xs"
+                                />
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1.5">
+                                  <Label htmlFor={`manual-parts-${idx}`}>Spare Part Terpakai</Label>
+                                  <Input
+                                    id={`manual-parts-${idx}`}
+                                    value={complaint.spareParts}
+                                    onChange={(e) => {
+                                      const newComplaints = [...manualComplaints];
+                                      newComplaints[idx].spareParts = e.target.value;
+                                      setManualComplaints(newComplaints);
+                                    }}
+                                    placeholder="mis. Filter Dryer"
+                                    className="h-9 text-xs"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label htmlFor={`manual-cost-${idx}`}>Biaya Perbaikan (Rp)</Label>
+                                  <Input
+                                    id={`manual-cost-${idx}`}
+                                    value={complaint.repairCost}
+                                    onChange={(e) => {
+                                      const newComplaints = [...manualComplaints];
+                                      newComplaints[idx].repairCost = e.target.value;
+                                      setManualComplaints(newComplaints);
+                                    }}
+                                    placeholder="0"
+                                    className="h-9 text-xs"
+                                  />
+                                </div>
+                              </div>
+                            </TabsContent>
+                          ))}
+                        </Tabs>
+                      </TabsContent>
+
+                      <TabsContent value="csv" className="space-y-3 mt-3 animate-in fade-in-50 duration-300">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="complaint-csv">File CSV Log Maintenance</Label>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              id="complaint-csv"
+                              type="file"
+                              accept=".csv"
+                              onChange={handleFileChange}
+                              className="h-9 text-xs file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-[10px] file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
+                            />
+                            {csvFile && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setCsvFile(null);
+                                  setCsvRows([]);
+                                  const input = document.getElementById("complaint-csv") as HTMLInputElement;
+                                  if (input) input.value = "";
+                                }}
+                                className="text-[10px] text-destructive hover:text-destructive/80"
+                              >
+                                Hapus
+                              </Button>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-muted-foreground leading-tight">
+                            Format kolom: repair_cost, issue_type, severity, root_cause, spare_parts_used, completed_date.
+                          </p>
+                        </div>
+                      </TabsContent>
+                    </Tabs>
                   </div>
 
                   {/* Live Metrics Preview Section */}
@@ -917,6 +1109,87 @@ export default function AssetsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Summary Popup Result */}
+      <Dialog open={resultOpen} onOpenChange={setResultOpen}>
+        <DialogContent className="sm:max-w-md border-border bg-card">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <CheckCircle2 className="h-6 w-6 text-success" />
+              Asset Prediction Result
+            </DialogTitle>
+            <DialogDescription>
+              AI Engine has analyzed the asset specifications and historical patterns.
+            </DialogDescription>
+          </DialogHeader>
+
+          {resultData && (
+            <div className="space-y-6 py-4">
+              <div className="flex items-start justify-between border-b border-border pb-4">
+                <div>
+                  <h3 className="text-lg font-bold text-foreground">{resultData.name}</h3>
+                  <p className="text-xs text-muted-foreground">{resultData.location}</p>
+                </div>
+                <Badge variant="outline" className={cn("rounded-full px-2.5", conditionStyle[resultData.condition as Cond])}>
+                  {resultData.condition}
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-2 gap-y-4 text-sm">
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground block">Asset ID</span>
+                  <span className="font-mono font-medium text-cyan">#{resultData.id}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground block">Category</span>
+                  <span className="font-medium">{resultData.category}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground block">Install Date</span>
+                  <span className="font-medium">{format(new Date(resultData.instalation_date), "dd MMM yyyy")}</span>
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-muted/40 p-4 border border-border/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-semibold">Predicted Sisa Umur (RUL)</span>
+                  <div className="text-right">
+                    <span className="text-2xl font-black text-primary block leading-none">
+                      {formatYears(resultData.predicted_rul)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Progress
+                    value={(() => {
+                      const ageDays = (new Date().getTime() - new Date(resultData.instalation_date).getTime()) / (1000 * 3600 * 24);
+                      const remainingDays = (resultData.predicted_rul || 0) * 365.25;
+                      const totalDays = ageDays + remainingDays;
+                      return totalDays > 0 ? Math.min(100, Math.max(0, (remainingDays / totalDays) * 100)) : 0;
+                    })()}
+                    className="h-2 bg-background"
+                  />
+                  <div className="flex justify-between text-[10px] text-muted-foreground font-medium italic">
+                    <span>Lifespan used</span>
+                    <span>Remaining capacity</span>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-center text-muted-foreground px-4">
+                This ML prediction is based on regional operational data and typical wear patterns.
+              </p>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button onClick={() => setResultOpen(false)} className="w-full bg-gradient-to-r from-primary to-cyan text-primary-foreground shadow-lg font-semibold">
+              Understand & Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

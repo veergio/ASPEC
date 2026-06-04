@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -19,17 +19,10 @@ import { CalendarIcon, Check, ChevronsUpDown, Save, RefreshCcw } from "lucide-re
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
-const ASSETS = [
-  { id: "AST-0001", name: "Chiller CH-22" },
-  { id: "AST-0002", name: "Compressor C-204" },
-  { id: "AST-0003", name: "Robot Arm R-15" },
-  { id: "AST-0004", name: "Pump P-118" },
-  { id: "AST-0005", name: "Conveyor CV-7" },
-  { id: "AST-0006", name: "Boiler B-02" },
-  { id: "AST-0007", name: "Generator G-09" },
-  { id: "AST-0008", name: "HVAC AH-3" },
-  { id: "AST-0009", name: "Turbine T-01" },
-];
+interface Asset {
+  id: number;
+  name: string;
+}
 
 const ALASAN_UMUM = [
   "Usia pakai habis",
@@ -50,13 +43,15 @@ function AssetCombobox({
   value,
   onChange,
   placeholder,
+  assets,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder: string;
+  assets: Asset[];
 }) {
   const [open, setOpen] = useState(false);
-  const selected = ASSETS.find((a) => a.id === value);
+  const selected = assets.find((a) => String(a.id) === value);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -79,14 +74,14 @@ function AssetCombobox({
           <CommandList>
             <CommandEmpty>Aset tidak ditemukan.</CommandEmpty>
             <CommandGroup>
-              {ASSETS.map((a) => (
+              {assets.map((a) => (
                 <CommandItem
                   key={a.id}
                   value={`${a.id} ${a.name}`}
-                  onSelect={() => { onChange(a.id); setOpen(false); }}
-                  className={cn(value === a.id && "bg-primary text-primary-foreground")}
+                  onSelect={() => { onChange(String(a.id)); setOpen(false); }}
+                  className={cn(value === String(a.id) && "bg-primary text-primary-foreground")}
                 >
-                  <Check className={cn("mr-2 h-4 w-4", value === a.id ? "opacity-100" : "opacity-0")} />
+                  <Check className={cn("mr-2 h-4 w-4", value === String(a.id) ? "opacity-100" : "opacity-0")} />
                   {a.id} — {a.name}
                 </CommandItem>
               ))}
@@ -99,27 +94,78 @@ function AssetCombobox({
 }
 
 export default function WorkReplacePage() {
+  const [assets, setAssets] = useState<Asset[]>([]);
   const [asetLama, setAsetLama] = useState("");
   const [asetBaru, setAsetBaru] = useState("");
+  const [newAssetIdentifier, setNewAssetIdentifier] = useState("");
   const [tanggal, setTanggal] = useState<Date>();
   const [tanggalOpen, setTanggalOpen] = useState(false);
   const [alasanUmum, setAlasanUmum] = useState("");
   const [alasanSpesifik, setAlasanSpesifik] = useState("");
   const [biaya, setBiaya] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/assets/details")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.assets) {
+          setAssets(data.assets);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to fetch assets", err);
+        toast.error("Gagal memuat daftar aset");
+      });
+  }, []);
 
   const formattedBiaya = useMemo(() => formatRupiah(biaya), [biaya]);
 
-  const onSubmit = (e: React.FormEvent) => {
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!asetLama || !asetBaru || !tanggal || !alasanUmum) {
-      toast.error("Lengkapi semua field wajib");
+    if (!asetLama || (!asetBaru && !newAssetIdentifier) || !tanggal || !alasanUmum) {
+      toast.error("Lengkapi semua field wajib (Aset Lama, Aset Baru/Identitas, Tanggal, dan Alasan)");
       return;
     }
-    const namaLama = ASSETS.find((a) => a.id === asetLama)?.name;
-    const namaBaru = ASSETS.find((a) => a.id === asetBaru)?.name;
-    toast.success("Data penggantian berhasil disimpan", {
-      description: `${namaLama} → ${namaBaru}`,
-    });
+
+    setIsSubmitting(true);
+    const payload = {
+      old_asset_id: parseInt(asetLama),
+      new_asset_id: asetBaru ? parseInt(asetBaru) : null,
+      new_asset_identifier: newAssetIdentifier || null,
+      replacement_date: format(tanggal, "yyyy-MM-dd"),
+      replacement_reason: `${alasanUmum}${alasanSpesifik ? `: ${alasanSpesifik}` : ""}`,
+      replacement_cost: parseInt(biaya.replace(/\D/g, "")) || 0,
+    };
+
+    try {
+      const response = await fetch("/api/asset-replacements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        toast.success("Data penggantian berhasil disimpan");
+        // Reset form
+        setAsetLama("");
+        setAsetBaru("");
+        setNewAssetIdentifier("");
+        setTanggal(undefined);
+        setAlasanUmum("");
+        setAlasanSpesifik("");
+        setBiaya("");
+      } else {
+        toast.error(result.message || "Gagal menyimpan data penggantian");
+      }
+    } catch (error) {
+      console.error("Error submitting replacement", error);
+      toast.error("Terjadi kesalahan koneksi ke server");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -133,7 +179,7 @@ export default function WorkReplacePage() {
             Form Riwayat Penggantian Aset
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Catat siklus hidup aset (Life Cycle). Data ini menjadi variabel penentu perhitungan Remaining Useful Life (RUL) di model prediktif.
+            Catat siklus hidup aset (Life Cycle). Data ini disimpan ke tabel `asset_replacements` untuk perhitungan RUL.
           </p>
         </div>
 
@@ -148,19 +194,33 @@ export default function WorkReplacePage() {
                   value={asetLama}
                   onChange={setAsetLama}
                   placeholder="Cari ID atau nama aset..."
+                  assets={assets}
                 />
                 <p className="text-[11px] text-muted-foreground">Aset yang akan diganti / dipensiunkan.</p>
               </div>
 
               {/* Aset Baru */}
               <div className="space-y-1.5">
-                <Label className="text-sm">ID / Nama Aset Baru</Label>
+                <Label className="text-sm">Aset Baru dari Sistem (Opsional)</Label>
                 <AssetCombobox
                   value={asetBaru}
                   onChange={setAsetBaru}
-                  placeholder="Cari ID atau nama aset..."
+                  placeholder="Cari ID atau nama aset pengganti..."
+                  assets={assets}
                 />
-                <p className="text-[11px] text-muted-foreground">Aset pengganti dari master data.</p>
+                <p className="text-[11px] text-muted-foreground">Pilih jika aset pengganti sudah terdaftar di master data.</p>
+              </div>
+
+              {/* Identifier Aset Baru */}
+              <div className="space-y-1.5">
+                <Label className="text-sm">Identitas / SN Aset Baru</Label>
+                <Input
+                  value={newAssetIdentifier}
+                  onChange={(e) => setNewAssetIdentifier(e.target.value)}
+                  placeholder="Contoh: SN-XYZ-2024 atau Tag ID baru..."
+                  className="h-11 bg-card"
+                />
+                <p className="text-[11px] text-muted-foreground">Isi jika aset baru belum memiliki ID sistem atau menggunakan identitas eksternal.</p>
               </div>
 
               {/* Tanggal Penggantian */}
@@ -206,7 +266,7 @@ export default function WorkReplacePage() {
                 <Textarea
                   value={alasanSpesifik}
                   onChange={(e) => setAlasanSpesifik(e.target.value)}
-                  placeholder="Catatan / alasan spesifik tambahan (opsional)..."
+                  placeholder="Catatan / alasan spesifik tambahan..."
                   className="min-h-[96px] bg-card"
                 />
               </div>
@@ -224,6 +284,7 @@ export default function WorkReplacePage() {
                     onChange={(e) => setBiaya(e.target.value)}
                     placeholder="0"
                     className="h-11 bg-card pl-9 text-left text-base font-medium tabular-nums"
+                    disabled={isSubmitting}
                   />
                 </div>
                 <p className="text-[11px] text-muted-foreground">
@@ -233,9 +294,15 @@ export default function WorkReplacePage() {
 
               <Button
                 type="submit"
+                disabled={isSubmitting}
                 className="h-12 w-full bg-gradient-to-r from-primary to-cyan text-base font-semibold text-primary-foreground shadow-md hover:opacity-95"
               >
-                <Save className="mr-2 h-4 w-4" /> Simpan Data Penggantian
+                {isSubmitting ? (
+                  <RefreshCcw className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="mr-2 h-4 w-4" />
+                )}
+                Simpan Data Penggantian
               </Button>
             </form>
           </CardContent>
