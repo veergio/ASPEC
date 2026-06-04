@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -11,16 +11,22 @@ import {
   Command, CommandEmpty, CommandGroup, CommandInput,
   CommandItem, CommandList,
 } from "@/components/ui/command";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { format } from "date-fns";
 import { CalendarIcon, Check, ChevronsUpDown, Save, Wrench } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
-const ASSETS = [
-  "Turbine T-01", "Compressor C-204", "Pump P-118",
-  "Generator G-09", "Conveyor CV-7", "HVAC AH-3",
-  "Boiler B-02", "Robot Arm R-15",
-];
+interface AssetOption {
+  id: number;
+  name: string;
+}
 
 function formatRupiah(value: string) {
   const digits = value.replace(/\D/g, "");
@@ -50,7 +56,7 @@ function DatePickerField({ label, value, onChange }: {
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-auto p-0" align="start">
-          <Calendar mode="single" selected={value} onSelect={onChange} initialFocus className={cn("p-3 pointer-events-auto")} />
+          <Calendar mode="single" selected={value} onSelect={onChange} className={cn("p-3 pointer-events-auto")} />
         </PopoverContent>
       </Popover>
     </div>
@@ -58,23 +64,102 @@ function DatePickerField({ label, value, onChange }: {
 }
 
 export default function WorkReportPage() {
-  const [asset, setAsset] = useState<string>("");
+  const [assetsList, setAssetsList] = useState<AssetOption[]>([]);
+  const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
+  const [assetName, setAssetName] = useState<string>("");
   const [assetOpen, setAssetOpen] = useState(false);
   const [planned, setPlanned] = useState<Date>();
   const [start, setStart] = useState<Date>();
   const [done, setDone] = useState<Date>();
   const [issue, setIssue] = useState("");
+  const [severity, setSeverity] = useState("");
   const [cause, setCause] = useState("");
   const [parts, setParts] = useState("");
   const [cost, setCost] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const formatted = useMemo(() => formatRupiah(cost), [cost]);
+  useEffect(() => {
+    async function loadAssets() {
+      try {
+        const res = await fetch("/api/assets/details");
+        if (res.ok) {
+          const json = await res.json();
+          if (json.assets) {
+            const mapped: AssetOption[] = json.assets.map((a: any) => ({
+              id: Number(a.id),
+              name: a.name,
+            }));
+            setAssetsList(mapped);
+          }
+        }
+      } catch (error) {
+        console.error("Gagal mengambil data aset:", error);
+        toast.error("Gagal memuat daftar aset dari server.");
+      }
+    }
+    loadAssets();
+  }, []);
 
-  const onSubmit = (e: React.FormEvent) => {
+  const formattedCost = useMemo(() => formatRupiah(cost), [cost]);
+
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    toast.success("Laporan berhasil disimpan", {
-      description: asset ? `${asset} • Rp ${formatted || 0}` : "Laporan tersimpan",
-    });
+    if (!selectedAssetId) {
+      toast.error("Harap pilih aset terlebih dahulu.");
+      return;
+    }
+    if (!start) {
+      toast.error("Tanggal mulai pemeliharaan wajib diisi.");
+      return;
+    }
+    if (!done) {
+      toast.error("Tanggal selesai pemeliharaan wajib diisi.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/maintenance", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          asset_id: selectedAssetId,
+          planned_date: planned ? planned.toISOString() : null,
+          started_date: start ? start.toISOString() : null,
+          completed_date: done ? done.toISOString() : null,
+          issue_type: issue,
+          severity: severity || "Low",
+          root_cause: cause,
+          spare_parts_used: parts,
+          repair_cost: cost,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast.success("Laporan berhasil disimpan!");
+        // Reset form
+        setAssetName("");
+        setSelectedAssetId(null);
+        setPlanned(undefined);
+        setStart(undefined);
+        setDone(undefined);
+        setIssue("");
+        setSeverity("");
+        setCause("");
+        setParts("");
+        setCost("");
+      } else {
+        toast.error(data.message || "Gagal menyimpan laporan.");
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Terjadi kesalahan saat menyimpan laporan.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -100,10 +185,10 @@ export default function WorkReportPage() {
                       role="combobox"
                       className={cn(
                         "h-11 w-full justify-between border-border bg-card text-left font-normal",
-                        !asset && "text-muted-foreground",
+                        !assetName && "text-muted-foreground",
                       )}
                     >
-                      {asset || "Pilih aset…"}
+                      {assetName || "Pilih aset…"}
                       <ChevronsUpDown className="ml-2 h-4 w-4 opacity-50" />
                     </Button>
                   </PopoverTrigger>
@@ -113,10 +198,18 @@ export default function WorkReportPage() {
                       <CommandList>
                         <CommandEmpty>Aset tidak ditemukan.</CommandEmpty>
                         <CommandGroup>
-                          {ASSETS.map((a) => (
-                            <CommandItem key={a} value={a} onSelect={() => { setAsset(a); setAssetOpen(false); }}>
-                              <Check className={cn("mr-2 h-4 w-4", asset === a ? "opacity-100" : "opacity-0")} />
-                              {a}
+                          {assetsList.map((a) => (
+                            <CommandItem
+                              key={a.id}
+                              value={a.name}
+                              onSelect={() => {
+                                setAssetName(a.name);
+                                setSelectedAssetId(a.id);
+                                setAssetOpen(false);
+                              }}
+                            >
+                              <Check className={cn("mr-2 h-4 w-4", assetName === a.name ? "opacity-100" : "opacity-0")} />
+                              {a.name}
                             </CommandItem>
                           ))}
                         </CommandGroup>
@@ -132,19 +225,50 @@ export default function WorkReportPage() {
                 <DatePickerField label="Tanggal Selesai" value={done} onChange={setDone} />
               </div>
 
-              <div className="space-y-1.5">
-                <Label className="text-sm">Keluhan / Permasalahan</Label>
-                <Textarea value={issue} onChange={(e) => setIssue(e.target.value)} placeholder="Jelaskan keluhan atau gejala kerusakan…" className="min-h-[96px] bg-card" />
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Keluhan / Permasalahan</Label>
+                  <Textarea
+                    value={issue}
+                    onChange={(e) => setIssue(e.target.value)}
+                    placeholder="Jelaskan keluhan atau gejala kerusakan…"
+                    className="min-h-[96px] bg-card"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Tingkat Keparahan (Severity)</Label>
+                  <Select value={severity} onValueChange={setSeverity}>
+                    <SelectTrigger className="h-11 border-border bg-card">
+                      <SelectValue placeholder="Pilih tingkat keparahan…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Low">Low</SelectItem>
+                      <SelectItem value="Medium">Medium</SelectItem>
+                      <SelectItem value="High">High</SelectItem>
+                      <SelectItem value="Critical">Critical</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               <div className="space-y-1.5">
                 <Label className="text-sm">Akar Penyebab</Label>
-                <Textarea value={cause} onChange={(e) => setCause(e.target.value)} placeholder="Hasil analisis penyebab utama…" className="min-h-[80px] bg-card" />
+                <Textarea
+                  value={cause}
+                  onChange={(e) => setCause(e.target.value)}
+                  placeholder="Hasil analisis penyebab utama…"
+                  className="min-h-[80px] bg-card"
+                />
               </div>
 
               <div className="space-y-1.5">
                 <Label className="text-sm">Spare Part Diganti</Label>
-                <Textarea value={parts} onChange={(e) => setParts(e.target.value)} placeholder="Daftar spare part yang diganti, mis. bearing 6205, seal hidrolik…" className="min-h-[80px] bg-card" />
+                <Textarea
+                  value={parts}
+                  onChange={(e) => setParts(e.target.value)}
+                  placeholder="Daftar spare part yang diganti, mis. bearing 6205, seal hidrolik…"
+                  className="min-h-[80px] bg-card"
+                />
               </div>
 
               <div className="space-y-1.5">
@@ -153,7 +277,7 @@ export default function WorkReportPage() {
                   <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">Rp</span>
                   <Input
                     inputMode="numeric"
-                    value={formatted}
+                    value={formattedCost}
                     onChange={(e) => setCost(e.target.value)}
                     placeholder="0"
                     className="h-11 bg-card pl-9 text-left text-base font-medium tabular-nums"
@@ -161,8 +285,13 @@ export default function WorkReportPage() {
                 </div>
               </div>
 
-              <Button type="submit" className="h-12 w-full bg-gradient-to-r from-primary to-cyan text-base font-semibold text-primary-foreground shadow-md hover:opacity-95">
-                <Save className="mr-2 h-4 w-4" /> Simpan Laporan
+              <Button
+                type="submit"
+                disabled={submitting}
+                className="h-12 w-full bg-gradient-to-r from-primary to-cyan text-base font-semibold text-primary-foreground shadow-md hover:opacity-95 disabled:opacity-50"
+              >
+                <Save className="mr-2 h-4 w-4" />
+                {submitting ? "Menyimpan…" : "Simpan Laporan"}
               </Button>
             </form>
           </CardContent>

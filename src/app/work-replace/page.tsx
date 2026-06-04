@@ -184,7 +184,6 @@ export default function WorkReplacePage() {
                       mode="single"
                       selected={tanggal}
                       onSelect={(d) => { setTanggal(d); setTanggalOpen(false); }}
-                      initialFocus
                       className="p-3 pointer-events-auto"
                     />
                   </PopoverContent>
