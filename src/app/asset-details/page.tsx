@@ -158,14 +158,17 @@ function severityTone(tag: string): string {
 }
 
 function mapAsset(a: ApiAsset): Asset {
-  // Calculate age in years based on installation date
+  // Calculate age in days and years based on installation date
   const installDate = a.instalation_date ? new Date(a.instalation_date) : new Date();
   const today = new Date();
   const diffTime = Math.max(0, today.getTime() - installDate.getTime());
-  const elapsedYears = diffTime / (1000 * 60 * 60 * 24 * 365.25);
+  const elapsedDays = diffTime / (1000 * 60 * 60 * 24);
+  const elapsedYears = elapsedDays / 365.25;
 
   const totalLifeYears = elapsedYears + (a.rul || 0);
   const healthPct = totalLifeYears > 0 ? Math.round(((a.rul || 0) / totalLifeYears) * 100) : 0;
+
+  const calculatedOpHours = Math.floor(elapsedDays) * (a.op_hours || 0);
 
   return {
     id: String(a.id),
@@ -175,7 +178,7 @@ function mapAsset(a: ApiAsset): Asset {
     rul: formatRul(a.rul),
     rulPct: Math.min(healthPct, 100),
     condition: getRulCondition(a.category, a.rul || 0),
-    opHours: `${a.op_hours?.toLocaleString("id-ID") ?? "0"}h`,
+    opHours: `${calculatedOpHours.toLocaleString("id-ID")}h`,
     dominantDamage: a.dominant_damage ?? "—",
     dominantCause: a.dominant_cause ?? "—",
     dominantSparePart: a.dominant_spare_part ?? "—",
