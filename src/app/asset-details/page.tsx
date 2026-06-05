@@ -4,10 +4,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   AlertTriangle, Wrench, Package, Wallet, MapPin, Gauge,
   TrendingUp, Activity, CheckCircle2, Zap, Cog, Calendar,
-  Sparkles, ArrowUpRight, Thermometer, ChevronLeft, ChevronRight
+  Sparkles, ArrowUpRight, Thermometer, ChevronLeft, ChevronRight,
+  Search
 } from "lucide-react";
 import { AiChatbot } from "@/components/ai-chatbot";
 
@@ -222,6 +224,7 @@ export default function AssetDetailsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
@@ -271,11 +274,16 @@ export default function AssetDetailsPage() {
     .slice(0, 4)
     .map(mapLog);
 
+  // Filter assets based on search term
+  const filteredAssets = assets.filter((a) =>
+    a.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
   // Hitung index data untuk halaman saat ini
-  const totalPages = Math.ceil(assets.length / itemsPerPage);
+  const totalPages = Math.ceil(filteredAssets.length / itemsPerPage);
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentAssets = assets.slice(indexOfFirstItem, indexOfLastItem);
+  const currentAssets = filteredAssets.slice(indexOfFirstItem, indexOfLastItem);
 
   return (
     <div className="-m-4 min-h-[calc(100vh-4rem)] bg-background p-4 md:-m-8 md:p-8">
@@ -303,6 +311,20 @@ export default function AssetDetailsPage() {
               <CardTitle className="text-sm text-foreground">Asset List</CardTitle>
             </CardHeader>
             <CardContent className="space-y-1.5 p-2">
+              <div className="px-2 pb-2">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search asset name..."
+                    className="pl-9 h-9"
+                    value={searchTerm}
+                    onChange={(e) => {
+                      setSearchTerm(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                  />
+                </div>
+              </div>
               {currentAssets.map((a) => {
                 const active = a.id === selectedId;
                 const Icon = conditionIcon[a.condition];
