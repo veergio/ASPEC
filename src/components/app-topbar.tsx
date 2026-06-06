@@ -32,13 +32,13 @@ export function AppTopbar() {
       <div className="md:hidden">
         <AspecLogo size={28} />
       </div>
-      <div className="relative hidden flex-1 max-w-md md:block">
+      {/* <div className="relative hidden flex-1 max-w-md md:block">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           placeholder="Search assets, reports, schedules…"
           className="h-10 border-border bg-background/60 pl-9"
         />
-      </div>
+      </div> */}
       <div className="ml-auto flex items-center gap-3">
         <div className="hidden items-center gap-2 rounded-full border border-success/30 bg-success/10 px-3 py-1.5 text-xs font-medium text-success md:flex">
           <span className="relative flex h-2 w-2">

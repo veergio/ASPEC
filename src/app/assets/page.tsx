@@ -20,6 +20,8 @@ import {
 } from "@/components/ui/select";
 import { Filter, Plus, Search, CheckCircle2, AlertTriangle, Zap, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
+import { motion } from "framer-motion";
+import { Skeleton } from "@/components/ui/skeleton-loading";
 
 type Cond = "Critical" | "Warning" | "Healthy";
 type Asset = {
@@ -29,6 +31,8 @@ type Asset = {
   years: number | null;
   condition: Cond;
   rul: string;
+  installationDate: string;
+  remainingRul: string;
 };
 
 // 🌟 Ditambahkan sesuai struktur return FITUR 1 GET database terupdate
@@ -104,6 +108,29 @@ function formatYears(y: number | null): string {
   if (yrs === 0) return `${mos} mo`;
   if (mos === 0) return `${yrs} yr`;
   return `${yrs} yr ${mos} mo`;
+}
+
+function formatRemainingRul(y: number | null): string {
+  if (y === null) return "N/A";
+  const isPast = y < 0;
+  const absY = Math.abs(y);
+  let yrs = Math.floor(absY);
+  let mos = Math.round((absY - yrs) * 12);
+
+  if (mos === 12) {
+    yrs += 1;
+    mos = 0;
+  }
+
+  let formatted = "";
+  if (yrs === 0) formatted = `${mos} mo`;
+  else if (mos === 0) formatted = `${yrs} yr`;
+  else formatted = `${yrs} yr ${mos} mo`;
+
+  if (isPast) {
+    return `${formatted} longer`;
+  }
+  return formatted;
 }
 
 const conditionStyle: Record<Cond, string> = {
@@ -286,6 +313,7 @@ export default function AssetsPage() {
       if (json.success && json.data) {
         const mapped: Asset[] = json.data.map((item: any) => {
           const y = item.predicted_rul !== null ? Number(item.predicted_rul) : null;
+          const remY = item.remaining_rul !== null ? Number(item.remaining_rul) : null;
           const locParts = [item.building, item.floor !== null ? `Fl. ${item.floor}` : null, item.zone].filter(Boolean);
 
           return {
@@ -293,8 +321,10 @@ export default function AssetsPage() {
             name: item.asset_name || `Asset #${item.asset_id}`,
             location: locParts.join(" · "),
             years: y,
-            condition: (item.derived_condition || getRulCondition(item.category, y)) as Cond,
-            rul: formatYears(y)
+            condition: (item.derived_condition || getRulCondition(item.category, remY)) as Cond,
+            rul: formatYears(y),
+            installationDate: item.instalation_date ? new Date(item.instalation_date).toLocaleDateString('id-ID') : "N/A",
+            remainingRul: formatRemainingRul(remY)
           };
         });
         setAssets(mapped);
@@ -500,8 +530,23 @@ export default function AssetsPage() {
     }
   };
 
+  const container = {
+    hidden: { opacity: 0 },
+    show: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.1
+      }
+    }
+  };
+
+  const item = {
+    hidden: { opacity: 0, y: 10 },
+    show: { opacity: 1, y: 0 }
+  };
+
   return (
-    <div className="space-y-4">
+    <motion.div variants={container} initial="hidden" animate="show" className="space-y-4">
       <PageHeader
         title="Asset Monitoring"
         subtitle="Live operational status, remaining useful life, and ML maintenance forecasts."
@@ -521,21 +566,33 @@ export default function AssetsPage() {
               </DialogHeader>
 
               {loadingOptions ? (
-                <div className="flex flex-col items-center justify-center p-12 space-y-2">
-                  <Loader2 className="h-7 w-7 animate-spin text-cyan" />
-                  <p className="text-xs text-muted-foreground animate-pulse">Menghubungkan opsi database...</p>
+                <div className="flex flex-col p-6 space-y-4">
+                  <Skeleton className="h-10 w-full" />
+                  <div className="grid grid-cols-2 gap-3">
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                  </div>
+                  <Skeleton className="h-10 w-full" />
+                  <div className="flex items-center space-x-2 text-cyan mt-4">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span className="text-xs">Menghubungkan opsi database...</span>
+                  </div>
                 </div>
               ) : (
                 <form onSubmit={onAdd} className="space-y-4 pt-2">
 
                   {/* Row 1: Nama Aset (Kustom Input Manual) */}
                   <div className="space-y-1.5">
-                    <Label htmlFor="asset-name">Nama Asset <span className="text-destructive">*</span></Label>
+                    <Label htmlFor="asset-name">Asset Name <span className="text-destructive">*</span></Label>
                     <Input
                       id="asset-name"
                       value={assetName}
                       onChange={(e) => setAssetName(e.target.value)}
-                      placeholder="mis. AC Split Ruang Server Utama"
+                      placeholder="ex. PAN-AE3Z-45541"
                       required
                     />
                   </div>
@@ -543,21 +600,21 @@ export default function AssetsPage() {
                   {/* Row 2: Brand & Model */}
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
-                      <Label htmlFor="asset-brand">Brand / Merk</Label>
+                      <Label htmlFor="asset-brand">Asset Brand</Label>
                       <Input
                         id="asset-brand"
                         value={assetBrand}
                         onChange={(e) => setAssetBrand(e.target.value)}
-                        placeholder="mis. Daikin"
+                        placeholder="ex. Daikin"
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="asset-model">Model / Tipe Seri</Label>
+                      <Label htmlFor="asset-model">Asset Model</Label>
                       <Input
                         id="asset-model"
                         value={assetModel}
                         onChange={(e) => setAssetModel(e.target.value)}
-                        placeholder="mis. FTNE15MV14"
+                        placeholder="ex. CS-YN-908"
                       />
                     </div>
                   </div>
@@ -568,7 +625,7 @@ export default function AssetsPage() {
                       <Label htmlFor="category">Category <span className="text-destructive">*</span></Label>
                       <Select value={category} onValueChange={setCategory} required>
                         <SelectTrigger id="category">
-                          <SelectValue placeholder="Pilih Kategori" />
+                          <SelectValue placeholder="Select Category" />
                         </SelectTrigger>
                         <SelectContent className="max-h-52">
                           {options.categories.map((cat) => (
@@ -581,7 +638,7 @@ export default function AssetsPage() {
                       <Label htmlFor="sub-category">Sub Category</Label>
                       <Select value={subCategory} onValueChange={setSubCategory}>
                         <SelectTrigger id="sub-category">
-                          <SelectValue placeholder="Pilih Sub Kategori" />
+                          <SelectValue placeholder="Select Sub Category" />
                         </SelectTrigger>
                         <SelectContent className="max-h-52">
                           {options.sub_categories.map((sub) => (
@@ -594,10 +651,10 @@ export default function AssetsPage() {
 
                   {/* Row 4: Tipe Asset (Untuk keperluan AI Feature Engine) */}
                   <div className="space-y-1.5">
-                    <Label htmlFor="asset-type">Tipe Asset <span className="text-destructive">*</span></Label>
+                    <Label htmlFor="asset-type">Asset Type <span className="text-destructive">*</span></Label>
                     <Select value={assetType} onValueChange={setAssetType} required>
                       <SelectTrigger id="asset-type">
-                        <SelectValue placeholder="Pilih Tipe Spek Aset" />
+                        <SelectValue placeholder="Select Asset Type" />
                       </SelectTrigger>
                       <SelectContent className="max-h-48">
                         {options.asset_types.map((type) => (
@@ -610,10 +667,10 @@ export default function AssetsPage() {
                   {/* Row 5: Grid Geografis Lokasi */}
                   <div className="grid grid-cols-3 gap-2">
                     <div className="space-y-1.5">
-                      <Label htmlFor="building">Gedung <span className="text-destructive">*</span></Label>
+                      <Label htmlFor="building">Building <span className="text-destructive">*</span></Label>
                       <Select value={building} onValueChange={setBuilding} required>
                         <SelectTrigger id="building">
-                          <SelectValue placeholder="Pilih" />
+                          <SelectValue placeholder="Select Building" />
                         </SelectTrigger>
                         <SelectContent>
                           {options.buildings.map((b) => (
@@ -624,24 +681,24 @@ export default function AssetsPage() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <Label htmlFor="floor">Lantai <span className="text-destructive">*</span></Label>
+                      <Label htmlFor="floor">Floor <span className="text-destructive">*</span></Label>
                       <Select value={floor} onValueChange={setFloor} required>
                         <SelectTrigger id="floor">
-                          <SelectValue placeholder="Pilih" />
+                          <SelectValue placeholder="Select Floor" />
                         </SelectTrigger>
                         <SelectContent className="max-h-48">
                           {options.floors.map((f) => (
-                            <SelectItem key={String(f)} value={String(f)}>Lantai {f}</SelectItem>
+                            <SelectItem key={String(f)} value={String(f)}>Floor {f}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
 
                     <div className="space-y-1.5">
-                      <Label htmlFor="zone">Zona / Bay</Label>
+                      <Label htmlFor="zone">Zone</Label>
                       <Select value={zone} onValueChange={setZone}>
                         <SelectTrigger id="zone">
-                          <SelectValue placeholder="Pilih" />
+                          <SelectValue placeholder="Select Zone" />
                         </SelectTrigger>
                         <SelectContent>
                           {options.zones.map((z) => (
@@ -655,7 +712,7 @@ export default function AssetsPage() {
                   {/* Row 6: Tanggal Instalasi & Initial Critical Level */}
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
-                      <Label htmlFor="instalation-date">Tanggal Instalasi <span className="text-destructive">*</span></Label>
+                      <Label htmlFor="instalation-date">Installation Date <span className="text-destructive">*</span></Label>
                       <Input
                         id="instalation-date"
                         type="date"
@@ -665,10 +722,10 @@ export default function AssetsPage() {
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="critical-level">Initial Assessment Level</Label>
+                      <Label htmlFor="critical-level">Critical Level</Label>
                       <Select value={criticalLevel} onValueChange={setCriticalLevel}>
                         <SelectTrigger id="critical-level">
-                          <SelectValue placeholder="Healthy (Bawaan)" />
+                          <SelectValue placeholder="Critical (Default)" />
                         </SelectTrigger>
                         <SelectContent>
                           {options.critical_levels.map((lvl) => (
@@ -681,14 +738,14 @@ export default function AssetsPage() {
 
                   {/* Row 7: Operating Hours */}
                   <div className="space-y-1.5">
-                    <Label htmlFor="operating-hours">Operating Hours Tracker</Label>
+                    <Label htmlFor="operating-hours">Operational Hours (h)</Label>
                     <Input
                       id="operating-hours"
                       type="number"
                       step="0.1"
                       value={operatingHours}
                       onChange={(e) => setOperatingHours(e.target.value)}
-                      placeholder="mis. 3450.2"
+                      placeholder="ex. 23"
                       required
                     />
                   </div>
@@ -823,18 +880,24 @@ export default function AssetsPage() {
               <TableRow className="border-border hover:bg-transparent">
                 <TableHead>Asset Name</TableHead>
                 <TableHead>Location</TableHead>
-                <TableHead>Remaining Useful Life</TableHead>
+                <TableHead>Installation Date</TableHead>
+                <TableHead>Total Predicted Life</TableHead>
+                <TableHead>RUL</TableHead>
                 <TableHead className="text-right">Condition</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loadingFetch ? (
-                <TableRow className="border-border hover:bg-transparent">
-                  <TableCell colSpan={4} className="py-12 text-center text-sm text-muted-foreground">
-                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-cyan" />
-                    <span className="mt-2 block">Menghubungkan ke database telemetry...</span>
-                  </TableCell>
-                </TableRow>
+                Array.from({ length: 6 }).map((_, rIdx) => (
+                  <TableRow key={rIdx} className="border-border hover:bg-transparent">
+                    <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-40" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                    <TableCell className="text-right flex justify-end"><Skeleton className="h-6 w-16 rounded-full" /></TableCell>
+                  </TableRow>
+                ))
               ) : assets.length === 0 ? (
                 <TableRow className="border-border hover:bg-transparent">
                   <TableCell colSpan={4} className="py-12 text-center text-sm text-muted-foreground">
@@ -845,16 +908,26 @@ export default function AssetsPage() {
                 assets.map((a) => {
                   const Icon = conditionIcon[a.condition];
                   return (
-                    <TableRow key={a.id} className="border-border">
+                    <motion.tr key={a.id} variants={item} className="border-border border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
                       <TableCell className="font-medium text-foreground">{a.name}</TableCell>
                       <TableCell className="text-muted-foreground">{a.location}</TableCell>
+                      <TableCell className="text-muted-foreground">{a.installationDate}</TableCell>
                       <TableCell className="text-muted-foreground">{a.rul}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {a.remainingRul === "N/A" ? (
+                          <span className="text-destructive font-medium">Expired / N/A</span>
+                        ) : a.remainingRul.includes("longer") ? (
+                          <span className="text-destructive font-medium">{a.remainingRul}</span>
+                        ) : (
+                          a.remainingRul
+                        )}
+                      </TableCell>
                       <TableCell className="text-right">
                         <Badge variant="outline" className={`gap-1 rounded-full px-2.5 ${conditionStyle[a.condition]}`}>
                           <Icon className="h-3 w-3" />{a.condition}
                         </Badge>
                       </TableCell>
-                    </TableRow>
+                    </motion.tr>
                   );
                 })
               )}
@@ -917,6 +990,6 @@ export default function AssetsPage() {
           </div>
         </CardContent>
       </Card>
-    </div>
+    </motion.div>
   );
 }

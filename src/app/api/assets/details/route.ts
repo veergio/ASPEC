@@ -18,7 +18,7 @@ export async function GET() {
                 n.dominant_cause, 
                 n.dominant_spare_part, 
                 n.estimated_cost, 
-                n.recommendation_narrative
+                a.recommendation_narrative
             FROM assets a
             LEFT JOIN (
                 SELECT 
@@ -28,7 +28,6 @@ export async function GET() {
                     dominant_cause,
                     dominant_spare_part,
                     estimated_cost,
-                    recommendation_narrative,
                     (@rownum := IF(@prev_type = asset_type, @rownum + 1, 1)) as rn,
                     (@prev_type := asset_type) as dummy
                 FROM nlp_clusters, (SELECT @rownum := 0, @prev_type := '') as vars

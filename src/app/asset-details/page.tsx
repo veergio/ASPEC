@@ -10,6 +10,8 @@ import {
   Sparkles, ArrowUpRight, Thermometer, ChevronLeft, ChevronRight
 } from "lucide-react";
 import { AiChatbot } from "@/components/ai-chatbot";
+import { motion } from "framer-motion";
+import { PageLoadingScreen } from "@/components/ui/skeleton-loading";
 
 type Condition = "Healthy" | "Warning" | "Critical";
 
@@ -52,6 +54,7 @@ interface Asset {
   dominantSparePart: string;
   estimatedCost: string;
   recommendationNarrative: string;
+  rawRul: number;
 }
 
 interface TimelineEntry {
@@ -119,22 +122,26 @@ function getRulCondition(category: string, rul: number): Condition {
   return "Healthy";
 }
 
-function normaliseCondition(raw: string): Condition {
-  const lower = raw?.toLowerCase() ?? "";
-  if (lower === "healthy") return "Healthy";
-  if (lower === "warning") return "Warning";
-  if (lower === "critical") return "Critical";
-  return "Critical";
-}
+function formatRul(y: number): string {
+  const isPast = y < 0;
+  const absY = Math.abs(y);
+  let yrs = Math.floor(absY);
+  let mos = Math.round((absY - yrs) * 12);
 
-function formatRul(years: number): string {
-  if (years <= 0) return "0 mo";
-  const yrs = Math.floor(years);
-  const mos = Math.round((years - yrs) * 12);
+  if (mos === 12) {
+    yrs += 1;
+    mos = 0;
+  }
 
-  if (yrs === 0) return `${mos} mo`;
-  if (mos === 0) return `${yrs} yr`;
-  return `${yrs} yr ${mos} mo`;
+  let formatted = "";
+  if (yrs === 0) formatted = `${mos} mo`;
+  else if (mos === 0) formatted = `${yrs} yr`;
+  else formatted = `${yrs} yr ${mos} mo`;
+
+  if (isPast) {
+    return `${formatted} longer`;
+  }
+  return formatted;
 }
 
 function formatCurrency(amount: number | null): string {
@@ -161,26 +168,29 @@ function mapAsset(a: ApiAsset): Asset {
   // Calculate age in years based on installation date
   const installDate = a.instalation_date ? new Date(a.instalation_date) : new Date();
   const today = new Date();
+  // Using 365 to align with SQL DATEDIFF logic
   const diffTime = Math.max(0, today.getTime() - installDate.getTime());
-  const elapsedYears = diffTime / (1000 * 60 * 60 * 24 * 365.25);
+  const elapsedYears = diffTime / (1000 * 60 * 60 * 24 * 365);
 
-  const totalLifeYears = elapsedYears + (a.rul || 0);
-  const healthPct = totalLifeYears > 0 ? Math.round(((a.rul || 0) / totalLifeYears) * 100) : 0;
+  const remainingRulCalc = (a.rul || 0) - elapsedYears;
+  const totalLifeYears = a.rul || 0;
+  const healthPct = totalLifeYears > 0 ? Math.round((Math.max(0, remainingRulCalc) / totalLifeYears) * 100) : 0;
 
   return {
     id: String(a.id),
     name: a.name,
     location: a.location || "N/A",
     health: Math.min(healthPct, 100),
-    rul: formatRul(a.rul),
+    rul: formatRul(remainingRulCalc),
     rulPct: Math.min(healthPct, 100),
-    condition: getRulCondition(a.category, a.rul || 0),
+    condition: getRulCondition(a.category, remainingRulCalc),
     opHours: `${a.op_hours?.toLocaleString("id-ID") ?? "0"}h`,
     dominantDamage: a.dominant_damage ?? "—",
     dominantCause: a.dominant_cause ?? "—",
     dominantSparePart: a.dominant_spare_part ?? "—",
     estimatedCost: formatCurrency(a.estimated_cost),
     recommendationNarrative: a.recommendation_narrative ?? "Tidak ada rekomendasi saat ini.",
+    rawRul: remainingRulCalc,
   };
 }
 
@@ -222,7 +232,7 @@ export default function AssetDetailsPage() {
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 5;
+  const itemsPerPage = 10;
 
   useEffect(() => {
     async function load() {
@@ -232,6 +242,27 @@ export default function AssetDetailsPage() {
         const { assets: raw, logs }: { assets: ApiAsset[]; logs: ApiLog[] } =
           await res.json();
         const mapped = raw.map(mapAsset);
+        
+        // Sorting logic: Critical (RUL >= 0) > Warning (RUL >= 0) > Healthy (RUL >= 0) > Critical (RUL < 0) > Warning (RUL < 0) > Healthy (RUL < 0)
+        mapped.sort((a, b) => {
+          const getRank = (asset: Asset) => {
+            if (asset.rawRul >= 0) {
+              if (asset.condition === "Critical") return 1;
+              if (asset.condition === "Warning") return 2;
+              if (asset.condition === "Healthy") return 3;
+            } else {
+              if (asset.condition === "Critical") return 4;
+              if (asset.condition === "Warning") return 5;
+              if (asset.condition === "Healthy") return 6;
+            }
+            return 7;
+          };
+          const rankA = getRank(a);
+          const rankB = getRank(b);
+          if (rankA !== rankB) return rankA - rankB;
+          return a.rawRul - b.rawRul;
+        });
+
         setAssets(mapped);
         setAllLogs(logs);
         if (mapped.length) setSelectedId(mapped[0].id);
@@ -246,11 +277,7 @@ export default function AssetDetailsPage() {
   }, []);
 
   if (loading) {
-    return (
-      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center text-muted-foreground text-sm">
-        Memuat data aset…
-      </div>
-    );
+    return <PageLoadingScreen message="Memuat detail aset dan predictive insight..." />;
   }
   if (error || !assets.length) {
     return (
@@ -274,8 +301,23 @@ export default function AssetDetailsPage() {
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentAssets = assets.slice(indexOfFirstItem, indexOfLastItem);
 
+  const container = {
+    hidden: { opacity: 0 },
+    show: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.1
+      }
+    }
+  };
+
+  const item = {
+    hidden: { opacity: 0, y: 20 },
+    show: { opacity: 1, y: 0 }
+  };
+
   return (
-    <div className="-m-4 min-h-[calc(100vh-4rem)] bg-background p-4 md:-m-8 md:p-8">
+    <motion.div variants={container} initial="hidden" animate="show" className="-m-4 min-h-[calc(100vh-4rem)] bg-background p-4 md:-m-8 md:p-8">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
@@ -288,12 +330,12 @@ export default function AssetDetailsPage() {
             Deep-dive AI insight, maintenance intelligence, and lifecycle analytics.
           </p>
         </div>
-        <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+        {/* <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
           <Sparkles className="mr-1 h-3 w-3" /> AI Insight Updated · Live
-        </Badge>
+        </Badge> */}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+      <motion.div variants={item} className="grid grid-cols-1 gap-4 lg:grid-cols-4">
         <Card className="border-border bg-card shadow-sm lg:col-span-1 flex flex-col justify-between">
           <div>
             <CardHeader className="pb-2">
@@ -466,7 +508,7 @@ export default function AssetDetailsPage() {
             </CardContent>
           </Card>
 
-          <div>
+          <motion.div variants={item}>
             <div className="mb-3 flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-primary" />
               <h3 className="text-sm font-semibold uppercase tracking-wider text-foreground">
@@ -535,13 +577,13 @@ export default function AssetDetailsPage() {
                 </Card>
               ))}
             </div>
-          </div>
+          </motion.div>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <motion.div variants={item} className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <Card className="border-border bg-card shadow-sm lg:col-span-2">
               <CardHeader>
                 <CardTitle className="text-base text-foreground">
-                  Maintenance Activity Timeline
+                  Maintenance Activity History
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -609,12 +651,13 @@ export default function AssetDetailsPage() {
                     </div>
                   ))}
                 </div>
+                <AiChatbot assetId={Number(asset.id)} />
               </CardContent>
             </Card>
-          </div>
+          </motion.div>
         </div>
-      </div>
-      <AiChatbot />
-    </div>
+      </motion.div>
+
+    </motion.div>
   );
 }

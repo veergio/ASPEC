@@ -108,36 +108,38 @@ export async function GET(request: NextRequest) {
             queryParams.push(searchWildcard, searchWildcard, searchWildcard);
         }
 
+        const remainingRulCalc = `(predicted_rul - (DATEDIFF(CURRENT_DATE, instalation_date) / 365))`;
+
         const conditionSql = `
             CASE 
                 WHEN category IN ('Sistem Pemadam Kebakaran', 'Sistem Proteksi Kebakaran Aktif', 'Security Sistem') THEN
                     CASE 
-                        WHEN predicted_rul <= 0.25 THEN 'Critical'
-                        WHEN predicted_rul <= 1.0 THEN 'Warning'
+                        WHEN ${remainingRulCalc} <= 0.25 THEN 'Critical'
+                        WHEN ${remainingRulCalc} <= 1.0 THEN 'Warning'
                         ELSE 'Healthy'
                     END
                 WHEN category IN ('Sistem Telekomunikasi Gedung', 'Pencatatan Meter') THEN
                     CASE 
-                        WHEN predicted_rul <= 0.5 THEN 'Critical'
-                        WHEN predicted_rul <= 2.0 THEN 'Warning'
+                        WHEN ${remainingRulCalc} <= 0.5 THEN 'Critical'
+                        WHEN ${remainingRulCalc} <= 2.0 THEN 'Warning'
                         ELSE 'Healthy'
                     END
                 WHEN category IN ('Mechanical', 'Electrical', 'Ventilasi Sistem', 'Sistem Transportasi Gedung', 'Sistem Energi') THEN
                     CASE 
-                        WHEN predicted_rul <= 1.0 THEN 'Critical'
-                        WHEN predicted_rul <= 3.0 THEN 'Warning'
+                        WHEN ${remainingRulCalc} <= 1.0 THEN 'Critical'
+                        WHEN ${remainingRulCalc} <= 3.0 THEN 'Warning'
                         ELSE 'Healthy'
                     END
                 WHEN category IN ('Civil', 'Arsitektur', 'Plumbing', 'Distribusi Air') THEN
                     CASE 
-                        WHEN predicted_rul <= 2.0 THEN 'Critical'
-                        WHEN predicted_rul <= 5.0 THEN 'Warning'
+                        WHEN ${remainingRulCalc} <= 2.0 THEN 'Critical'
+                        WHEN ${remainingRulCalc} <= 5.0 THEN 'Warning'
                         ELSE 'Healthy'
                     END
                 WHEN category = 'Latihan Balakar' THEN
                     CASE 
-                        WHEN predicted_rul <= 0.5 THEN 'Critical'
-                        WHEN predicted_rul <= 1.5 THEN 'Warning'
+                        WHEN ${remainingRulCalc} <= 0.5 THEN 'Critical'
+                        WHEN ${remainingRulCalc} <= 1.5 THEN 'Warning'
                         ELSE 'Healthy'
                     END
                 ELSE 'Healthy'
@@ -164,13 +166,24 @@ export async function GET(request: NextRequest) {
         const totalItems = totalCountResult[0]?.total || 0;
         const totalPages = Math.ceil(totalItems / limit);
 
-        const dataParams = [...queryParams, limit, offset];
+        const dataParams = [...queryParams];
         const dbAssets = await query<AssetDBRow>(
-            `SELECT asset_id, asset_name, building, floor, zone, predicted_rul, critical_level, category, (${conditionSql}) as derived_condition 
+            `SELECT asset_id, asset_name, instalation_date, asset_type, building, floor, zone, predicted_rul, critical_level, category, (${conditionSql}) as derived_condition, ${remainingRulCalc} as remaining_rul 
              FROM assets 
              ${whereSql}
-             ORDER BY CASE WHEN predicted_rul IS NULL THEN 1 ELSE 0 END, predicted_rul ASC
-             LIMIT ? OFFSET ?`,
+             ORDER BY 
+                 CASE 
+                     WHEN (${conditionSql}) = 'Critical' AND ${remainingRulCalc} >= 0 THEN 1
+                     WHEN (${conditionSql}) = 'Warning' AND ${remainingRulCalc} >= 0 THEN 2
+                     WHEN (${conditionSql}) = 'Healthy' AND ${remainingRulCalc} >= 0 THEN 3
+                     WHEN (${conditionSql}) = 'Critical' AND ${remainingRulCalc} < 0 THEN 4
+                     WHEN (${conditionSql}) = 'Warning' AND ${remainingRulCalc} < 0 THEN 5
+                     WHEN (${conditionSql}) = 'Healthy' AND ${remainingRulCalc} < 0 THEN 6
+                     ELSE 7
+                 END ASC,
+                 CASE WHEN predicted_rul IS NULL THEN 1 ELSE 0 END, 
+                 ${remainingRulCalc} ASC
+             LIMIT ${limit} OFFSET ${offset}`,
             dataParams
         );
 
@@ -322,20 +335,29 @@ export async function POST(request: NextRequest) {
         }
 
         // Hit External API (FastAPI) untuk menghitung RUL dan mengupdate DB secara internal
-        const aiEngineUrl = "http://localhost:8000/api/predict-rul";
+        const aiEngineUrl = "http://localhost:8000/api/predict-xgboost-rul";
+
+        let calculatedOperatingHours = 0.0;
+        if (instalation_date && operational_hours) {
+            const installDate = new Date(instalation_date);
+            const today = new Date();
+            const diffTime = today.getTime() - installDate.getTime();
+            const diffDays = diffTime > 0 ? diffTime / (1000 * 60 * 60 * 24) : 0;
+            calculatedOperatingHours = parseFloat(operational_hours) * diffDays * (5 / 7);
+        }
 
         const aiResponse = await fetch(aiEngineUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 asset_id: newAssetId,
-                Tipe: asset_type,
-                "Lokasi Gedung": building,
-                "Lokasi Lantai": Number(floor),
-                "Lokasi Zona": zone || "",
-                Operating_Hours: operational_hours ? parseFloat(operational_hours) : 0.0,
-                "Total komplain": Number(total_komplain || 0),
-                "Total biaya perbaikan": parseFloat(total_biaya_perbaikan || 0)
+                tipe: asset_type,
+                "lokasi_gedung": building,
+                "lokasi_lantai": Number(floor),
+                "lokasi_zona": zone || "",
+                "operating_hours": calculatedOperatingHours,
+                "total_komplain": Number(total_komplain || 0),
+                "total_biaya_perbaikan": parseFloat(total_biaya_perbaikan || 0)
             })
         });
 
@@ -346,8 +368,15 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({
                 success: true,
                 asset_id: newAssetId,
-                message: "Asset berhasil dibuat, tetapi gagal memicu kalkulasi otomatis AI Engine."
+                message: "Asset berhasil dibuat, tetapi~ gagal memicu kalkulasi otomatis AI Engine."
             });
+        }
+
+        if (aiData.predicted_rul !== undefined) {
+            await query(
+                `UPDATE assets SET predicted_rul = ? WHERE asset_id = ?`,
+                [aiData.predicted_rul, newAssetId]
+            );
         }
 
         return NextResponse.json({

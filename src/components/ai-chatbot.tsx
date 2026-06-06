@@ -1,8 +1,7 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
-import { Bot, Send, Sparkles, X, Move } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Bot, Send, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { motion, useDragControls, useMotionValue } from "framer-motion";
 import { useRole } from "@/lib/role";
 
 const suggestions = [
@@ -16,111 +15,120 @@ const seed: ChatMsg[] = [
   { from: "ai", text: "Hi, I'm ASPEC AI. Ask me about asset health, maintenance budgets, or predictive insights." },
 ];
 
-export function AiChatbot() {
+export function AiChatbot({ assetId }: { assetId: number }) {
   const role = useRole();
 
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMsg[]>(seed);
   const [draft, setDraft] = useState("");
-  const dragControls = useDragControls();
-
-  const [windowSize, setWindowSize] = useState({ width: 0, height: 0 });
-
-  // 🔴 Ref untuk mendeteksi apakah user sedang melakukan drag atau sekadar klik biasa
-  const isDraggingRef = useRef(false);
-
-  const x = useMotionValue(0);
-  const y = useMotionValue(0);
+  const [isTyping, setIsTyping] = useState(false);
+  const [chatHistory, setChatHistory] = useState<any[]>([]);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      setWindowSize({ width: window.innerWidth, height: window.innerHeight });
-
-      x.set(window.innerWidth - 80);
-      y.set(window.innerHeight - 80);
-
-      const handleResize = () => {
-        setWindowSize({ width: window.innerWidth, height: window.innerHeight });
-      };
-      window.addEventListener("resize", handleResize);
-      return () => window.removeEventListener("resize", handleResize);
-    }
-  }, [x, y]);
+    setMessages(seed);
+    setChatHistory([]);
+    setDraft("");
+  }, [assetId]);
 
   if (role === "teknisi") {
     return null;
   }
 
-  const send = (text: string) => {
-    if (!text.trim()) return;
-    setMessages((m) => [
-      ...m,
-      { from: "user", text },
-      { from: "ai", text: "Analyzing telemetry… I'll surface insights based on the latest predictive model run." },
-    ]);
+  const send = async (text: string) => {
+    if (!text.trim() || isTyping) return;
+
+    // Optimistic UI update
+    setMessages((m) => [...m, { from: "user", text }]);
     setDraft("");
-  };
+    setIsTyping(true);
 
-  const dragConstraints = {
-    left: 16,
-    top: 16,
-    right: open ? windowSize.width - 376 : windowSize.width - 72,
-    bottom: open ? windowSize.height - 536 : windowSize.height - 72,
-  };
+    try {
+      console.log("mengirim chat dengan asset id : ", assetId)
+      const response = await fetch("http://localhost:8000/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          asset_id: assetId,
+          user_query: text,
+          chat_history: chatHistory
+        }),
+      });
 
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch");
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder("utf-8");
+
+      // Menyiapkan gelembung chat AI yang kosong untuk diisi dari stream
+      setMessages((m) => [...m, { from: "ai", text: "" }]);
+
+      let accumulatedText = "";
+
+      if (reader) {
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+
+          buffer = parts.pop() || ""; // Simpan sisa chunk yang belum lengkap
+
+          for (const part of parts) {
+            if (part.startsWith("data: ")) {
+              try {
+                const jsonStr = part.slice(6);
+                const data = JSON.parse(jsonStr);
+
+                if (data.type === "token" && data.content) {
+                  accumulatedText += data.content;
+                  setMessages((m) => {
+                    const newM = [...m];
+                    newM[newM.length - 1] = { from: "ai", text: accumulatedText };
+                    return newM;
+                  });
+                } else if (data.type === "done") {
+                  if (data.updated_history) {
+                    setChatHistory(data.updated_history);
+                  }
+                } else if (data.type === "error") {
+                  accumulatedText += "\n\n[Error: " + data.content + "]";
+                  setMessages((m) => {
+                    const newM = [...m];
+                    newM[newM.length - 1] = { from: "ai", text: accumulatedText };
+                    return newM;
+                  });
+                }
+              } catch (e) {
+                console.error("Gagal memparsing JSON dari SSE", e, part);
+              }
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      setMessages((m) => [...m, { from: "ai", text: "Maaf, terjadi kesalahan koneksi ke server AI." }]);
+    } finally {
+      setIsTyping(false);
+    }
+  };
   return (
-    <>
-      <motion.div
-        layout
-        drag
-        dragConstraints={dragConstraints}
-        dragElastic={0}
-        dragMomentum={false}
-        dragControls={dragControls}
-        dragListener={!open}
-
-        onDragStart={() => {
-          isDraggingRef.current = true;
-        }}
-
-        onDragEnd={() => {
-          setTimeout(() => {
-            isDraggingRef.current = false;
-          }, 50);
-        }}
-
-        style={{ position: "fixed", top: 0, left: 0, x, y }}
-        className={`pointer-events-auto z-50 flex flex-col overflow-hidden shadow-2xl border border-border bg-card ${open
-            ? "h-[520px] w-[360px] max-w-[calc(100vw-2rem)] rounded-2xl"
-            : "h-14 w-14 rounded-full cursor-grab active:cursor-grabbing bg-gradient-to-br from-primary to-cyan shadow-[0_10px_40px_-8px_var(--cyan)] items-center justify-center"
+    <div className="fixed bottom-6 right-6 z-50">
+      <div
+        className={`flex flex-col overflow-hidden shadow-2xl border border-border bg-card transition-all duration-300 origin-bottom-right ${open
+          ? "h-[520px] w-[360px] max-w-[calc(100vw-2rem)] rounded-2xl opacity-100 scale-100"
+          : "h-14 w-14 rounded-full opacity-0 scale-50 pointer-events-none absolute bottom-0 right-0"
           }`}
       >
-        {!open ? (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-
-              if (isDraggingRef.current) return;
-
-              const curX = x.get();
-              const curY = y.get();
-              if (curX + 360 > windowSize.width) x.set(windowSize.width - 384);
-              if (curY + 520 > windowSize.height) y.set(windowSize.height - 544);
-              setOpen(true);
-            }}
-            className="relative flex h-full w-full items-center justify-center rounded-full outline-none"
-            aria-label="Open ASPEC AI"
-          >
-            <Bot className="h-6 w-6 text-primary-foreground" />
-            <span className="absolute right-1 top-1 h-3 w-3 rounded-full border-2 border-background bg-success" />
-          </button>
-        ) : (
+        {open && (
           <>
             {/* HEADER CHATBOT */}
-            <div
-              onPointerDown={(e) => dragControls.start(e)}
-              className="flex cursor-move items-center justify-between border-b border-border bg-gradient-to-r from-primary/20 to-cyan/10 px-4 py-3 select-none active:cursor-grabbing"
-            >
+            <div className="flex items-center justify-between border-b border-border bg-gradient-to-r from-primary/20 to-cyan/10 px-4 py-3 select-none">
               <div className="flex items-center gap-2 pointer-events-none">
                 <div className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-primary to-cyan text-primary-foreground">
                   <Sparkles className="h-4 w-4" />
@@ -128,7 +136,6 @@ export function AiChatbot() {
                 <div className="leading-tight">
                   <div className="text-sm font-semibold text-foreground flex items-center gap-1.5">
                     ASPEC AI Assistant
-                    <Move className="h-3 w-3 text-muted-foreground opacity-60" />
                   </div>
                   <div className="text-[10px] text-muted-foreground">Predictive maintenance copilot</div>
                 </div>
@@ -138,7 +145,6 @@ export function AiChatbot() {
                   e.stopPropagation();
                   setOpen(false);
                 }}
-                onPointerDown={(e) => e.stopPropagation()}
                 className="text-muted-foreground hover:text-foreground p-1 rounded-md transition-colors hover:bg-background/40"
               >
                 <X className="h-4 w-4" />
@@ -151,8 +157,8 @@ export function AiChatbot() {
                 <div key={i} className={`flex ${m.from === "user" ? "justify-end" : "justify-start"}`}>
                   <div
                     className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${m.from === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-background/60 text-foreground"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-background/60 text-foreground"
                       }`}
                   >
                     {m.text}
@@ -168,7 +174,8 @@ export function AiChatbot() {
                   <button
                     key={s}
                     onClick={() => send(s)}
-                    className="rounded-full border border-border bg-background/40 px-2.5 py-1 text-[11px] text-muted-foreground transition hover:border-cyan/50 hover:text-foreground"
+                    disabled={isTyping}
+                    className="rounded-full border border-border bg-background/40 px-2.5 py-1 text-[11px] text-muted-foreground transition hover:border-cyan/50 hover:text-foreground disabled:opacity-50"
                   >
                     {s}
                   </button>
@@ -184,17 +191,32 @@ export function AiChatbot() {
                 <input
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  placeholder="Ask ASPEC AI…"
-                  className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                  placeholder={isTyping ? "ASPEC AI is typing..." : "Ask ASPEC AI…"}
+                  disabled={isTyping}
+                  className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
                 />
-                <Button type="submit" size="icon" className="h-7 w-7 rounded-full bg-gradient-to-br from-primary to-cyan">
+                <Button type="submit" size="icon" disabled={isTyping || !draft.trim()} className="h-7 w-7 rounded-full bg-gradient-to-br from-primary to-cyan disabled:opacity-50">
                   <Send className="h-3.5 w-3.5" />
                 </Button>
               </form>
             </div>
           </>
         )}
-      </motion.div>
-    </>
+      </div>
+
+      {!open && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen(true);
+          }}
+          className="absolute bottom-0 right-0 flex h-14 w-14 items-center justify-center rounded-full outline-none bg-gradient-to-br from-primary to-cyan shadow-[0_10px_40px_-8px_var(--cyan)] transition-transform hover:scale-105 active:scale-95"
+          aria-label="Open ASPEC AI"
+        >
+          <Bot className="h-6 w-6 text-primary-foreground" />
+          <span className="absolute right-1 top-1 h-3 w-3 rounded-full border-2 border-background bg-success" />
+        </button>
+      )}
+    </div>
   );
 }

@@ -24,6 +24,8 @@ import {
   PaginationPrevious,
 } from "@/components/ui/pagination";
 import { Search, FileText, Eye, Calendar, Wrench, Wallet, Hash, ShieldAlert, Settings } from "lucide-react";
+import { motion } from "framer-motion";
+import { Skeleton } from "@/components/ui/skeleton-loading";
 
 type Report = {
   id: string;
@@ -130,8 +132,23 @@ export default function ReportHistoryPage() {
     setCurrentPage(1);
   }, [query, itemsPerPage]);
 
+  const container = {
+    hidden: { opacity: 0 },
+    show: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.1
+      }
+    }
+  };
+
+  const item = {
+    hidden: { opacity: 0, y: 10 },
+    show: { opacity: 1, y: 0 }
+  };
+
   return (
-    <div>
+    <motion.div variants={container} initial="hidden" animate="show">
       <PageHeader
         title="Riwayat Laporan"
         subtitle="Daftar laporan pemeliharaan yang telah Anda kirimkan."
@@ -172,9 +189,20 @@ export default function ReportHistoryPage() {
 
           <div className="divide-y divide-border">
             {loading && (
-              <div className="p-8 text-center text-sm text-muted-foreground">
-                Memuat data riwayat laporan…
-              </div>
+              Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex flex-wrap items-center gap-4 p-4">
+                  <Skeleton className="h-10 w-10 shrink-0 rounded-lg" />
+                  <div className="flex-1 min-w-[220px] space-y-2">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-3 w-60" />
+                  </div>
+                  <div className="text-right space-y-2">
+                    <Skeleton className="h-4 w-24 ml-auto" />
+                    <Skeleton className="h-5 w-16 ml-auto rounded-full" />
+                  </div>
+                  <Skeleton className="h-8 w-20 rounded-md" />
+                </div>
+              ))
             )}
             {error && (
               <div className="p-8 text-center text-sm text-critical">
@@ -187,7 +215,7 @@ export default function ReportHistoryPage() {
               </div>
             )}
             {!loading && !error && paginatedReports.map((r) => (
-              <div key={r.id} className="flex flex-wrap items-center gap-4 p-4">
+              <motion.div variants={item} key={r.id} className="flex flex-wrap items-center gap-4 p-4">
                 <div className="grid h-10 w-10 place-items-center rounded-lg bg-primary/10 text-primary">
                   <FileText className="h-4 w-4" />
                 </div>
@@ -210,7 +238,7 @@ export default function ReportHistoryPage() {
                 <Button size="sm" variant="outline" className="border-border" onClick={() => setSelected(r)}>
                   <Eye className="mr-2 h-3.5 w-3.5" /> Detail
                 </Button>
-              </div>
+              </motion.div>
             ))}
           </div>
 
@@ -343,6 +371,6 @@ export default function ReportHistoryPage() {
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </motion.div>
   );
 }
