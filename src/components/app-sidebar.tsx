@@ -32,7 +32,7 @@ const managerItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Asset Monitoring", url: "/assets", icon: Activity },
   { title: "Asset Details", url: "/asset-details", icon: Boxes },
-  // { title: "Reports", url: "/reports", icon: FileBarChart2 },
+  { title: "NLP Clusters", url: "/clusters", icon: FileBarChart2 },
 ];
 
 const technicianItems = [

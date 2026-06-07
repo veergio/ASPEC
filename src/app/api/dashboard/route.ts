@@ -88,13 +88,51 @@ export async function GET() {
             ORDER BY frequency DESC
         `;
 
-        const summaryResult = await query<any>(summarySql);
-        const clusters = await query<any>(clustersSql);
+        // Monthly maintenance trend (tickets + cost)
+        const monthlyTrendSql = `
+            SELECT
+                DATE_FORMAT(completed_date, '%Y-%m') AS month,
+                COUNT(*) AS tickets,
+                COALESCE(SUM(repair_cost), 0) AS total_cost
+            FROM maintenance_logs
+            WHERE completed_date IS NOT NULL
+            GROUP BY month
+            ORDER BY month
+        `;
+
+        // Asset count grouped by category
+        const categorySql = `
+            SELECT category, COUNT(*) AS count
+            FROM assets
+            WHERE status = 'Aktif' AND category IS NOT NULL
+            GROUP BY category
+            ORDER BY count DESC
+        `;
+
+        // Severity distribution from maintenance logs
+        const severitySql = `
+            SELECT severity, COUNT(*) AS count
+            FROM maintenance_logs
+            WHERE severity IS NOT NULL
+            GROUP BY severity
+            ORDER BY count DESC
+        `;
+
+        const [summaryResult, clusters, monthlyTrend, categoryDist, severityDist] = await Promise.all([
+            query<any>(summarySql),
+            query<any>(clustersSql),
+            query<any>(monthlyTrendSql),
+            query<any>(categorySql),
+            query<any>(severitySql),
+        ]);
 
         return NextResponse.json({
             success: true,
             summary: summaryResult[0],
-            clusters
+            clusters,
+            monthlyTrend,
+            categoryDist,
+            severityDist,
         });
     } catch (error) {
         console.error("[DASHBOARD_API_ERROR]", error);
