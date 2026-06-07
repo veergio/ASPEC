@@ -123,6 +123,45 @@ export async function POST(request: NextRequest) {
 
     const newLogId = (result as any).insertId ?? (result as any)[0]?.insertId;
 
+    // Hit API ChromaDB untuk insert ke vector database
+    try {
+      // Query dan asset_type dari table assets
+      const assetRows: any = await query(
+        `SELECT asset_type FROM assets WHERE asset_id = ?`,
+        [Number(asset_id)]
+      );
+      const asset = Array.isArray(assetRows) && assetRows.length > 0 ? assetRows[0] : null;
+
+      const chromaPayload = {
+        records: [
+          {
+            ticket_id: newLogId,
+            asset_id: Number(asset_id),
+            asset_type: asset?.asset_type || "",
+            issue_type: issue_type || "",
+            root_cause: root_cause || "",
+            spare_parts_used: spare_parts_used || "",
+            repair_cost: cleanCost,
+          },
+        ],
+      };
+
+      const chromaRes = await fetch("http://localhost:8000/api/insert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(chromaPayload),
+      });
+
+      if (!chromaRes.ok) {
+        console.error("[CHROMA_INSERT_FAILED]", chromaRes.status, await chromaRes.text());
+      } else {
+        console.log("[CHROMA_INSERT_SUCCESS] ticket_id:", newLogId);
+      }
+    } catch (chromaErr: any) {
+      // Non-blocking: jangan gagalkan response utama jika ChromaDB error
+      console.error("[CHROMA_INSERT_ERROR]", chromaErr.message || chromaErr);
+    }
+
     return NextResponse.json({
       success: true,
       ticket_id: newLogId,
