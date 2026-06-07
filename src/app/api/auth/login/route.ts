@@ -42,11 +42,8 @@ export async function POST(request: NextRequest) {
     // ── Verify password ─────────────────────────────────────────
 
     // ── Verify password ─────────────────────────────────────────
-    console.log("Password dari Input:", password);
-    console.log("Password dari DB:", user.password);
 
     const passwordMatch = await bcrypt.compare(password, user.password);
-    console.log("Apakah Cocok?:", passwordMatch); // Ini harusnya TRUE jika benar
 
     if (!passwordMatch) {
       return NextResponse.json(

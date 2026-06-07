@@ -13,6 +13,7 @@ export async function GET() {
                 a.operational_hours as op_hours,
                 a.instalation_date,
                 a.category,
+                a.recommendation_narrative,
                 n.dominant_damage, 
                 n.asset_type,
                 n.dominant_cause, 

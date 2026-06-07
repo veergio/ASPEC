@@ -7,11 +7,17 @@ import { Button } from "@/components/ui/button";
 import {
   AlertTriangle, Wrench, Package, Wallet, MapPin, Gauge,
   TrendingUp, Activity, CheckCircle2, Zap, Cog, Calendar,
-  Sparkles, ArrowUpRight, Thermometer, ChevronLeft, ChevronRight
+  Sparkles, ArrowUpRight, Thermometer, ChevronLeft, ChevronRight,
+  Search, Filter
 } from "lucide-react";
 import { AiChatbot } from "@/components/ai-chatbot";
 import { motion } from "framer-motion";
 import { PageLoadingScreen } from "@/components/ui/skeleton-loading";
+import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent,
+  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type Condition = "Healthy" | "Warning" | "Critical";
 
@@ -46,6 +52,7 @@ interface Asset {
   location: string;
   health: number;
   rul: string;
+  rawRul: number;
   rulPct: number;
   condition: Condition;
   opHours: string;
@@ -54,7 +61,6 @@ interface Asset {
   dominantSparePart: string;
   estimatedCost: string;
   recommendationNarrative: string;
-  rawRul: number;
 }
 
 interface TimelineEntry {
@@ -170,11 +176,14 @@ function mapAsset(a: ApiAsset): Asset {
   const today = new Date();
   // Using 365 to align with SQL DATEDIFF logic
   const diffTime = Math.max(0, today.getTime() - installDate.getTime());
-  const elapsedYears = diffTime / (1000 * 60 * 60 * 24 * 365);
+  const elapsedDays = diffTime / (1000 * 60 * 60 * 24);
+  const elapsedYears = elapsedDays / 365;
 
   const remainingRulCalc = (a.rul || 0) - elapsedYears;
   const totalLifeYears = a.rul || 0;
   const healthPct = totalLifeYears > 0 ? Math.round((Math.max(0, remainingRulCalc) / totalLifeYears) * 100) : 0;
+
+  const calculatedOpHours = Math.floor(elapsedDays) * (a.op_hours || 0);
 
   return {
     id: String(a.id),
@@ -182,15 +191,15 @@ function mapAsset(a: ApiAsset): Asset {
     location: a.location || "N/A",
     health: Math.min(healthPct, 100),
     rul: formatRul(remainingRulCalc),
+    rawRul: remainingRulCalc,
     rulPct: Math.min(healthPct, 100),
     condition: getRulCondition(a.category, remainingRulCalc),
-    opHours: `${a.op_hours?.toLocaleString("id-ID") ?? "0"}h`,
+    opHours: `${calculatedOpHours.toLocaleString("id-ID")}h`,
     dominantDamage: a.dominant_damage ?? "—",
     dominantCause: a.dominant_cause ?? "—",
     dominantSparePart: a.dominant_spare_part ?? "—",
     estimatedCost: formatCurrency(a.estimated_cost),
     recommendationNarrative: a.recommendation_narrative ?? "Tidak ada rekomendasi saat ini.",
-    rawRul: remainingRulCalc,
   };
 }
 
@@ -234,6 +243,18 @@ export default function AssetDetailsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
+  // Filter States
+  const [queryStr, setQueryStr] = useState("");
+  const ALL_CONDITIONS: Condition[] = ["Critical", "Warning", "Healthy"];
+  const [activeConditions, setActiveConditions] = useState<Condition[]>(ALL_CONDITIONS);
+
+  const toggleCondition = (c: Condition) => {
+    setActiveConditions((prev) =>
+      prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
+    );
+    setCurrentPage(1);
+  };
+
   useEffect(() => {
     async function load() {
       try {
@@ -243,7 +264,6 @@ export default function AssetDetailsPage() {
           await res.json();
         const mapped = raw.map(mapAsset);
         
-        // Sorting logic: Critical (RUL >= 0) > Warning (RUL >= 0) > Healthy (RUL >= 0) > Critical (RUL < 0) > Warning (RUL < 0) > Healthy (RUL < 0)
         mapped.sort((a, b) => {
           const getRank = (asset: Asset) => {
             if (asset.rawRul >= 0) {
@@ -295,25 +315,32 @@ export default function AssetDetailsPage() {
     .slice(0, 4)
     .map(mapLog);
 
+  const filteredAssets = assets.filter(a => {
+    const matchesSearch = a.name.toLowerCase().includes(queryStr.toLowerCase()) || a.location.toLowerCase().includes(queryStr.toLowerCase());
+    const matchesCondition = activeConditions.includes(a.condition);
+    return matchesSearch && matchesCondition;
+  });
+
   // Hitung index data untuk halaman saat ini
-  const totalPages = Math.ceil(assets.length / itemsPerPage);
+  const totalPages = Math.ceil(filteredAssets.length / itemsPerPage) || 1;
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentAssets = assets.slice(indexOfFirstItem, indexOfLastItem);
+  const currentAssets = filteredAssets.slice(indexOfFirstItem, indexOfLastItem);
 
   const container = {
     hidden: { opacity: 0 },
     show: {
       opacity: 1,
       transition: {
-        staggerChildren: 0.1
+        staggerChildren: 0.04,
+        duration: 0.2,
       }
     }
   };
 
   const item = {
-    hidden: { opacity: 0, y: 20 },
-    show: { opacity: 1, y: 0 }
+    hidden: { opacity: 0 },
+    show: { opacity: 1, transition: { duration: 0.2 } }
   };
 
   return (
@@ -340,38 +367,87 @@ export default function AssetDetailsPage() {
           <div>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm text-foreground">Asset List</CardTitle>
+              <div className="mt-3 flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={queryStr}
+                    onChange={(e) => {
+                      setQueryStr(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                    placeholder="Cari asset..."
+                    className="h-8 pl-8 text-xs"
+                  />
+                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-8 shrink-0 justify-between text-xs px-2.5">
+                      <div className="flex items-center">
+                        <Filter className="mr-1.5 h-3.5 w-3.5" /> Filter
+                      </div>
+                      {activeConditions.length < ALL_CONDITIONS.length && (
+                        <Badge variant="secondary" className="ml-1.5 h-4 px-1 text-[9px]">
+                          {activeConditions.length}
+                        </Badge>
+                      )}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuLabel className="text-xs">Kondisi</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {ALL_CONDITIONS.map((c) => (
+                      <DropdownMenuCheckboxItem
+                        key={c}
+                        checked={activeConditions.includes(c)}
+                        onCheckedChange={() => toggleCondition(c)}
+                        onSelect={(e) => e.preventDefault()}
+                        className="text-xs"
+                      >
+                        {c}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </CardHeader>
             <CardContent className="space-y-1.5 p-2">
-              {currentAssets.map((a) => {
-                const active = a.id === selectedId;
-                const Icon = conditionIcon[a.condition];
-                return (
-                  <button
-                    key={a.id}
-                    onClick={() => setSelectedId(a.id)}
-                    className={`w-full rounded-xl border p-3 text-left transition ${active
-                      ? "border-primary/40 bg-primary/5 shadow-sm"
-                      : "border-transparent hover:border-border hover:bg-muted/60"
-                      }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm font-medium text-foreground">
-                        {a.name}
-                      </span>
-                      <Badge
-                        variant="outline"
-                        className={`gap-1 text-[10px] ${conditionStyle[a.condition]}`}
-                      >
-                        <Icon className="h-3 w-3" />
-                        {a.condition}
-                      </Badge>
-                    </div>
-                    <div className="mt-1 text-[11px] text-muted-foreground">
-                      {a.location}
-                    </div>
-                  </button>
-                );
-              })}
+              {currentAssets.length === 0 ? (
+                <div className="p-4 text-center text-xs text-muted-foreground">
+                  Tidak ada asset yang cocok.
+                </div>
+              ) : (
+                currentAssets.map((a) => {
+                  const active = a.id === selectedId;
+                  const Icon = conditionIcon[a.condition];
+                  return (
+                    <button
+                      key={a.id}
+                      onClick={() => setSelectedId(a.id)}
+                      className={`w-full rounded-xl border p-3 text-left transition ${active
+                        ? "border-primary/40 bg-primary/5 shadow-sm"
+                        : "border-transparent hover:border-border hover:bg-muted/60"
+                        }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-sm font-medium text-foreground">
+                          {a.name}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className={`gap-1 text-[10px] ${conditionStyle[a.condition]}`}
+                        >
+                          <Icon className="h-3 w-3" />
+                          {a.condition}
+                        </Badge>
+                      </div>
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        {a.location}
+                      </div>
+                    </button>
+                  );
+                })
+              )}
             </CardContent>
           </div>
 

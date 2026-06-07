@@ -137,14 +137,15 @@ export default function ReportHistoryPage() {
     show: {
       opacity: 1,
       transition: {
-        staggerChildren: 0.1
+        staggerChildren: 0.04,
+        duration: 0.2,
       }
     }
   };
 
   const item = {
-    hidden: { opacity: 0, y: 10 },
-    show: { opacity: 1, y: 0 }
+    hidden: { opacity: 0 },
+    show: { opacity: 1, transition: { duration: 0.2 } }
   };
 
   return (
@@ -215,7 +216,7 @@ export default function ReportHistoryPage() {
               </div>
             )}
             {!loading && !error && paginatedReports.map((r) => (
-              <motion.div variants={item} key={r.id} className="flex flex-wrap items-center gap-4 p-4">
+              <div key={r.id} className="flex flex-wrap items-center gap-4 p-4">
                 <div className="grid h-10 w-10 place-items-center rounded-lg bg-primary/10 text-primary">
                   <FileText className="h-4 w-4" />
                 </div>
@@ -238,7 +239,7 @@ export default function ReportHistoryPage() {
                 <Button size="sm" variant="outline" className="border-border" onClick={() => setSelected(r)}>
                   <Eye className="mr-2 h-3.5 w-3.5" /> Detail
                 </Button>
-              </motion.div>
+              </div>
             ))}
           </div>
 
