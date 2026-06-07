@@ -58,18 +58,33 @@ export async function GET() {
         `;
 
         const clustersSql = `
-            SELECT 
-                dominant_damage AS jenis, 
-                dominant_cause AS penyebab, 
-                dominant_spare_part AS sparePart, 
-                estimated_cost AS biaya,
-                COUNT(*) AS frequency
-            FROM nlp_clusters
-            GROUP BY 
-                dominant_damage, 
-                dominant_cause, 
-                dominant_spare_part, 
-                estimated_cost
+            WITH latest_runs AS (
+                SELECT run_id, asset_type
+                FROM (
+                    SELECT run_id, asset_type, ROW_NUMBER() OVER (PARTITION BY asset_type ORDER BY run_id DESC) as run_rn
+                    FROM clustering_runs
+                ) r
+                WHERE r.run_rn = 1
+            ),
+            best_clusters AS (
+                SELECT 
+                    c.dominant_damage AS jenis,
+                    c.dominant_cause AS penyebab,
+                    c.dominant_spare_part AS sparePart,
+                    c.average_cost AS biaya,
+                    c.member_count AS frequency,
+                    lr.asset_type
+                FROM nlp_clusters c
+                INNER JOIN latest_runs lr ON c.run_id = lr.run_id
+                INNER JOIN (
+                    SELECT 
+                        cluster_id,
+                        ROW_NUMBER() OVER (PARTITION BY run_id ORDER BY member_count DESC, cluster_id DESC) as cluster_rn
+                    FROM nlp_clusters
+                ) cr ON c.cluster_id = cr.cluster_id AND cr.cluster_rn = 1
+            )
+            SELECT jenis, penyebab, sparePart, biaya, frequency, asset_type
+            FROM best_clusters
             ORDER BY frequency DESC
         `;
 
