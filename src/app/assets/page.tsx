@@ -122,7 +122,7 @@ function formatRemainingRul(y: number | null): string {
   else formatted = `${yrs} yr ${mos} mo`;
 
   if (isPast) {
-    return `${formatted} longer`;
+    return `Overdue by ${formatted}`;
   }
   return formatted;
 }
@@ -337,7 +337,7 @@ export default function AssetsPage() {
                       <TableCell className="text-muted-foreground">
                         {a.remainingRul === "N/A" ? (
                           <span className="text-destructive font-medium">Expired / N/A</span>
-                        ) : a.remainingRul.includes("longer") ? (
+                        ) : a.remainingRul.includes("Overdue") ? (
                           <span className="text-destructive font-medium">{a.remainingRul}</span>
                         ) : (
                           a.remainingRul
@@ -452,23 +452,39 @@ export default function AssetsPage() {
                 </div>
               </div>
 
-              <div className="rounded-xl bg-muted/40 p-4 border border-border/50">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-semibold">Predicted Sisa Umur (RUL)</span>
+              <div className="rounded-xl bg-muted/40 p-4 border border-border/50 space-y-4">
+                <div className="flex items-center justify-between border-b border-border/50 pb-3">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase">Total Predicted Life</span>
                   <div className="text-right">
-                    <span className="text-2xl font-black text-primary block leading-none">
+                    <span className="text-lg font-bold text-foreground block leading-none">
                       {formatYears(resultData.predicted_rul)}
                     </span>
+                    <span className="text-[10px] text-muted-foreground">Dari tanggal pemasangan</span>
                   </div>
                 </div>
 
-                <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase">Remaining Useful Life (RUL)</span>
+                  <div className="text-right">
+                    <span className="text-2xl font-black text-primary block leading-none">
+                      {(() => {
+                        const ageYears = (new Date().getTime() - new Date(resultData.instalation_date).getTime()) / (1000 * 3600 * 24 * 365.25);
+                        const remainingRulVal = resultData.predicted_rul !== null ? resultData.predicted_rul - ageYears : null;
+                        return formatRemainingRul(remainingRulVal);
+                      })()}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">Sisa dari hari ini</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-2">
                   <Progress
                     value={(() => {
-                      const ageDays = (new Date().getTime() - new Date(resultData.instalation_date).getTime()) / (1000 * 3600 * 24);
-                      const remainingDays = (resultData.predicted_rul || 0) * 365.25;
-                      const totalDays = ageDays + remainingDays;
-                      return totalDays > 0 ? Math.min(100, Math.max(0, (remainingDays / totalDays) * 100)) : 0;
+                      const ageYears = (new Date().getTime() - new Date(resultData.instalation_date).getTime()) / (1000 * 3600 * 24 * 365.25);
+                      const totalLifeYears = resultData.predicted_rul || 0;
+                      const remainingYears = totalLifeYears - ageYears;
+                      const pct = totalLifeYears > 0 ? (remainingYears / totalLifeYears) * 100 : 0;
+                      return Math.min(100, Math.max(0, pct));
                     })()}
                     className="h-2 bg-background"
                   />

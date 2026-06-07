@@ -145,7 +145,7 @@ function formatRul(y: number): string {
   else formatted = `${yrs} yr ${mos} mo`;
 
   if (isPast) {
-    return `${formatted} longer`;
+    return `Overdue by ${formatted}`;
   }
   return formatted;
 }

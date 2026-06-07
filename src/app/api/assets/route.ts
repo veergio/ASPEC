@@ -335,7 +335,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Hit External API (FastAPI) untuk menghitung RUL dan mengupdate DB secara internal
-        const aiEngineUrl = "http://localhost:8000/api/predict-xgboost-rul";
+        const aiEngineUrl = "http://localhost:8000/api/predict-rul";
 
         let calculatedOperatingHours = 0.0;
         if (instalation_date && operational_hours) {
