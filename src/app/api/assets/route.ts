@@ -14,6 +14,196 @@ interface AssetDBRow {
 interface DistinctStringRow { value: string; }
 interface DistinctNumberRow { value: number; }
 
+function formatDateForDB(dateStr: any): string | null {
+    if (!dateStr) return null;
+    let cleanStr = String(dateStr).trim();
+    if (!cleanStr) return null;
+
+    // Check for DD/MM/YYYY or DD-MM-YYYY
+    const dmyRegex = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/;
+    const match = cleanStr.match(dmyRegex);
+    if (match) {
+        const [_, day, month, year, hour = '00', minute = '00', second = '00'] = match;
+        const pad = (s: string) => s.padStart(2, '0');
+        return `${year}-${pad(month)}-${pad(day)} ${pad(hour)}:${pad(minute)}:${pad(second)}`;
+    }
+
+    // Try normal Date parsing
+    const d = new Date(cleanStr);
+    if (!isNaN(d.getTime())) {
+        const pad = (n: number) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    // Fallback: if it's already YYYY-MM-DD format, return it
+    if (/^\d{4}-\d{2}-\d{2}/.test(cleanStr)) {
+        return cleanStr;
+    }
+
+    return null;
+}
+
+async function processSingleAsset(assetData: any) {
+    const {
+        asset_name,
+        asset_brand,
+        asset_model,
+        category,
+        sub_category,
+        asset_type,
+        building,
+        floor,
+        zone,
+        critical_level,
+        instalation_date,
+        operational_hours,
+        total_komplain,
+        total_biaya_perbaikan,
+        complaints
+    } = assetData;
+
+    // Validasi kolom-kolom wajib
+    if (!asset_name || !asset_type || !category || !building || !floor || !instalation_date) {
+        throw new Error(`Missing required fields for asset: ${asset_name || 'Unknown'}`);
+    }
+
+    const insertQuery = `
+        INSERT INTO assets (
+            asset_name, asset_brand, asset_model, category, sub_category, 
+            asset_type, building, floor, zone, critical_level, 
+            instalation_date, operational_hours, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Aktif')
+    `;
+
+    const result = await query(insertQuery, [
+        asset_name,
+        asset_brand || null,
+        asset_model || null,
+        category,
+        sub_category || null,
+        asset_type,
+        building,
+        Number(floor),
+        zone || null,
+        critical_level || 'Healthy',
+        typeof instalation_date === 'string' ? instalation_date.split('T')[0] : instalation_date,
+        operational_hours ? parseFloat(operational_hours) : 0.0
+    ]);
+
+    const newAssetId = (result as any).insertId ?? (result as any)[0]?.insertId;
+
+    if (!newAssetId) {
+        throw new Error("Gagal mendapatkan auto_increment ID dari database.");
+    }
+
+    // Insert complaints if present
+    if (complaints && Array.isArray(complaints) && complaints.length > 0) {
+        for (const comp of complaints) {
+            const technician_id = null;
+            const planned_date = comp.planned_date ? formatDateForDB(comp.planned_date) : null;
+            const started_date = comp.started_date ? formatDateForDB(comp.started_date) : null;
+            const completed_date = comp.completed_date ? formatDateForDB(comp.completed_date) : null;
+            const issue_type = comp.issue_type || null;
+            const severity = comp.severity || null;
+            const root_cause = comp.root_cause || null;
+            const spare_parts_used = comp.spare_parts_used || null;
+            const repair_cost = comp.repair_cost ? parseFloat(comp.repair_cost) : null;
+            const is_embedded = comp.is_embedded !== undefined ? Number(comp.is_embedded) : 0;
+
+            await query(
+                `INSERT INTO maintenance_logs (
+                    asset_id, technician_id, planned_date, started_date, completed_date,
+                    issue_type, severity, root_cause, spare_parts_used, repair_cost, is_embedded
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    newAssetId,
+                    technician_id,
+                    planned_date,
+                    started_date,
+                    completed_date,
+                    issue_type,
+                    severity,
+                    root_cause,
+                    spare_parts_used,
+                    repair_cost,
+                    is_embedded
+                ]
+            );
+        }
+    }
+
+    // Trigger AI Engine
+    const aiEngineUrl = "http://localhost:8000/api/predict-rul";
+    let calculatedOperatingHours = 0.0;
+    if (instalation_date && operational_hours) {
+        const installDate = new Date(instalation_date);
+        const today = new Date();
+        const diffTime = today.getTime() - installDate.getTime();
+        const diffDays = diffTime > 0 ? diffTime / (1000 * 60 * 60 * 24) : 0;
+        calculatedOperatingHours = parseFloat(operational_hours) * diffDays * (5 / 7);
+    }
+
+    try {
+        const aiResponse = await fetch(aiEngineUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                asset_id: newAssetId,
+                tipe: asset_type,
+                "lokasi_gedung": building,
+                "lokasi_lantai": Number(floor),
+                "lokasi_zona": zone || "",
+                "operating_hours": calculatedOperatingHours,
+                "total_komplain": Number(total_komplain || 0),
+                "total_biaya_perbaikan": parseFloat(total_biaya_perbaikan || 0)
+            })
+        });
+
+        const aiData = await aiResponse.json();
+
+        if (aiResponse.ok && aiData.predicted_rul !== undefined) {
+            await query(
+                `UPDATE assets SET predicted_rul = ? WHERE asset_id = ?`,
+                [aiData.predicted_rul, newAssetId]
+            );
+            return { asset_id: newAssetId, predicted_rul: aiData.predicted_rul, success: true };
+        }
+    } catch (e) {
+        console.error("[AI_ENGINE_CONNECTION_ERROR]", e);
+    }
+
+    return { asset_id: newAssetId, success: true, message: "Asset created but AI prediction skipped or failed." };
+}
+
+export async function POST(request: NextRequest) {
+    try {
+        const body = await request.json();
+
+        if (Array.isArray(body)) {
+            const results = [];
+            for (const asset of body) {
+                try {
+                    const res = await processSingleAsset(asset);
+                    results.push(res);
+                } catch (err: any) {
+                    results.push({ success: false, message: err.message });
+                }
+            }
+            return NextResponse.json({ success: true, results });
+        }
+
+        const result = await processSingleAsset(body);
+        return NextResponse.json(result);
+
+    } catch (error: any) {
+        console.error("[POST_ASSET_ERROR]", error);
+        return NextResponse.json(
+            { success: false, message: error.message || "Gagal menyimpan asset baru" },
+            { status: 500 }
+        );
+    }
+}
+
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
@@ -201,195 +391,6 @@ export async function GET(request: NextRequest) {
         console.error("[GET_PAGINATED_ASSETS_ERROR]", error);
         return NextResponse.json(
             { success: false, message: "Gagal memuat telemetry data dari server" },
-            { status: 500 }
-        );
-    }
-}
-
-function formatDateForDB(dateStr: any): string | null {
-    if (!dateStr) return null;
-    let cleanStr = String(dateStr).trim();
-    if (!cleanStr) return null;
-
-    // Check for DD/MM/YYYY or DD-MM-YYYY
-    const dmyRegex = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/;
-    const match = cleanStr.match(dmyRegex);
-    if (match) {
-        const [_, day, month, year, hour = '00', minute = '00', second = '00'] = match;
-        const pad = (s: string) => s.padStart(2, '0');
-        return `${year}-${pad(month)}-${pad(day)} ${pad(hour)}:${pad(minute)}:${pad(second)}`;
-    }
-
-    // Try normal Date parsing
-    const d = new Date(cleanStr);
-    if (!isNaN(d.getTime())) {
-        const pad = (n: number) => String(n).padStart(2, '0');
-        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-    }
-
-    // Fallback: if it's already YYYY-MM-DD format, return it
-    if (/^\d{4}-\d{2}-\d{2}/.test(cleanStr)) {
-        return cleanStr;
-    }
-
-    return null;
-}
-
-export async function POST(request: NextRequest) {
-    try {
-        const body = await request.json();
-
-        const {
-            asset_name,
-            asset_brand,
-            asset_model,
-            category,
-            sub_category,
-            asset_type,
-            building,
-            floor,
-            zone,
-            critical_level,
-            instalation_date,
-            operational_hours,
-            total_komplain,
-            total_biaya_perbaikan,
-            complaints
-        } = body;
-
-        // Validasi kolom-kolom wajib (sesuai aturan NOT NULL database)
-        if (!asset_name || !asset_type || !category || !building || !floor || !instalation_date) {
-            return NextResponse.json(
-                { success: false, message: "Missing required fields (name, type, category, building, floor, instalation_date)" },
-                { status: 400 }
-            );
-        }
-
-        // 🌟 QUERY INSERT SEKARANG MENCAKUP SEMUA KOLOM DI DATABASE ANDA
-        const insertQuery = `
-            INSERT INTO assets (
-                asset_name, asset_brand, asset_model, category, sub_category, 
-                asset_type, building, floor, zone, critical_level, 
-                instalation_date, operational_hours, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Aktif')
-        `;
-
-        const result = await query(insertQuery, [
-            asset_name,
-            asset_brand || null,
-            asset_model || null,
-            category,
-            sub_category || null,
-            asset_type,
-            building,
-            Number(floor),
-            zone || null,
-            critical_level || 'Healthy',
-            typeof instalation_date === 'string' ? instalation_date.split('T')[0] : instalation_date, // Pastikan format DATE murni YYYY-MM-DD
-            operational_hours ? parseFloat(operational_hours) : 0.0
-        ]);
-
-        // mysql2 returns ResultSetHeader for INSERT (not a row array),
-        // but our query() helper casts it as T[]. Access insertId directly.
-        const newAssetId = (result as any).insertId ?? (result as any)[0]?.insertId;
-
-        if (!newAssetId) {
-            throw new Error("Gagal mendapatkan auto_increment ID dari database.");
-        }
-
-        // Insert complaints from CSV if present
-        if (complaints && Array.isArray(complaints) && complaints.length > 0) {
-            for (const comp of complaints) {
-                // technician_id has FK constraint to users table — CSV values won't match, so default to null
-                const technician_id = null;
-                const planned_date = comp.planned_date ? formatDateForDB(comp.planned_date) : null;
-                const started_date = comp.started_date ? formatDateForDB(comp.started_date) : null;
-                const completed_date = comp.completed_date ? formatDateForDB(comp.completed_date) : null;
-                const issue_type = comp.issue_type || null;
-                const severity = comp.severity || null;
-                const root_cause = comp.root_cause || null;
-                const spare_parts_used = comp.spare_parts_used || null;
-                const repair_cost = comp.repair_cost ? parseFloat(comp.repair_cost) : null;
-                const is_embedded = comp.is_embedded !== undefined ? Number(comp.is_embedded) : 0;
-
-                await query(
-                    `INSERT INTO maintenance_logs (
-                        asset_id, technician_id, planned_date, started_date, completed_date,
-                        issue_type, severity, root_cause, spare_parts_used, repair_cost, is_embedded
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [
-                        newAssetId,
-                        technician_id,
-                        planned_date,
-                        started_date,
-                        completed_date,
-                        issue_type,
-                        severity,
-                        root_cause,
-                        spare_parts_used,
-                        repair_cost,
-                        is_embedded
-                    ]
-                );
-            }
-        }
-
-        // Hit External API (FastAPI) untuk menghitung RUL dan mengupdate DB secara internal
-        const aiEngineUrl = "http://localhost:8000/api/predict-rul";
-
-        let calculatedOperatingHours = 0.0;
-        if (instalation_date && operational_hours) {
-            const installDate = new Date(instalation_date);
-            const today = new Date();
-            const diffTime = today.getTime() - installDate.getTime();
-            const diffDays = diffTime > 0 ? diffTime / (1000 * 60 * 60 * 24) : 0;
-            calculatedOperatingHours = parseFloat(operational_hours) * diffDays * (5 / 7);
-        }
-
-        const aiResponse = await fetch(aiEngineUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                asset_id: newAssetId,
-                tipe: asset_type,
-                "lokasi_gedung": building,
-                "lokasi_lantai": Number(floor),
-                "lokasi_zona": zone || "",
-                "operating_hours": calculatedOperatingHours,
-                "total_komplain": Number(total_komplain || 0),
-                "total_biaya_perbaikan": parseFloat(total_biaya_perbaikan || 0)
-            })
-        });
-
-        const aiData = await aiResponse.json();
-
-        if (!aiResponse.ok) {
-            console.error("[AI_ENGINE_WARNING]", aiData);
-            return NextResponse.json({
-                success: true,
-                asset_id: newAssetId,
-                message: "Asset berhasil dibuat, tetapi~ gagal memicu kalkulasi otomatis AI Engine."
-            });
-        }
-
-        if (aiData.predicted_rul !== undefined) {
-            await query(
-                `UPDATE assets SET predicted_rul = ? WHERE asset_id = ?`,
-                [aiData.predicted_rul, newAssetId]
-            );
-        }
-
-        return NextResponse.json({
-            success: true,
-            asset_id: newAssetId,
-            predicted_rul: aiData.predicted_rul,
-            message: "Asset berhasil ditambahkan dan nilai RUL berhasil diprediksi oleh AI Engine!"
-        });
-
-    } catch (error: any) {
-        console.error("[POST_ASSET_ERROR]", error);
-        return NextResponse.json(
-            { success: false, message: error.message || "Gagal menyimpan asset baru" },
             { status: 500 }
         );
     }

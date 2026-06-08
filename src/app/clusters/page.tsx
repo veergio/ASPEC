@@ -386,7 +386,7 @@ export default function ClustersPage() {
                     >
                       {active && <div className="absolute top-0 right-0 h-16 w-16 bg-primary/10 rounded-bl-full flex items-start justify-end p-2"><CheckCircle2 className="h-4 w-4 text-primary" /></div>}
                       <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
-                        <span className="font-bold text-primary">Cluster #{c.cluster_index}</span>
+                        <span className="font-bold text-primary">Cluster #{c.cluster_index + 1}</span>
                         <Badge variant="outline" className="text-[10px] bg-background">{c.member_count} logs</Badge>
                       </div>
                       <div className="mt-3 text-lg font-bold text-foreground line-clamp-1">
