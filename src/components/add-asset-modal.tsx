@@ -112,45 +112,67 @@ function parseClientCSV(text: string): any[] {
 
 function parseAssetCSV(text: string): any[] {
   const lines = text.split(/\r?\n/);
-  if (lines.length === 0 || !lines[0].trim()) return [];
-  const headers = splitCSVLine(lines[0]).map(h => h.trim().toLowerCase().replace(/^["']|["']$/g, ''));
+  if (lines.length < 2) return [];
+
+  // Ambil header dan bersihkan dari whitespace/quotes
+  const headers = splitCSVLine(lines[0]).map(h => 
+    h.trim().toLowerCase().replace(/^["']|["']$/g, '')
+  );
+
   const rows: any[] = [];
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
+    
     const values = splitCSVLine(line);
     const rowObj: any = {};
     headers.forEach((header, idx) => {
-      const val = values[idx] !== undefined ? values[idx].trim().replace(/^["']|["']$/g, '') : '';
-      rowObj[header] = val;
+      rowObj[header] = values[idx] !== undefined ? values[idx].trim().replace(/^["']|["']$/g, '') : '';
     });
 
-    const findValue = (keys: string[]) => {
+    // Helper untuk mengambil nilai dengan multiple possible keys
+    const getVal = (keys: string[]) => {
       for (const k of keys) {
-        if (rowObj[k] !== undefined) return rowObj[k];
-        const spaceK = k.replace(/_/g, ' ');
-        if (rowObj[spaceK] !== undefined) return rowObj[spaceK];
+        if (rowObj[k] !== undefined && rowObj[k] !== '') return rowObj[k];
       }
-      return undefined;
+      return null;
     };
 
-    const normalized: any = {
-      asset_name: findValue(['asset_name', 'name', 'nama asset', 'nama_asset', 'asset name']),
-      asset_brand: findValue(['asset_brand', 'brand', 'merk']),
-      asset_model: findValue(['asset_model', 'model', 'tipe model']),
-      category: findValue(['category', 'kategori']),
-      sub_category: findValue(['sub_category', 'sub category', 'sub_kategori']),
-      asset_type: findValue(['asset_type', 'type', 'tipe']),
-      building: findValue(['building', 'gedung', 'lokasi_gedung']),
-      floor: findValue(['floor', 'lantai', 'lokasi_lantai']),
-      zone: findValue(['zone', 'zona', 'lokasi_zona']),
-      critical_level: findValue(['critical_level', 'critical level', 'critical', 'level']),
-      instalation_date: findValue(['instalation_date', 'installation date', 'tanggal pasang', 'tgl_pasang', 'instalation date']),
-      operational_hours: findValue(['operational_hours', 'op_hours', 'jam operasional', 'jam_operasional', 'operational hours']),
-      total_komplain: findValue(['total_komplain', 'total komplain', 'total_complaints', 'complaints_count']),
-      total_biaya_perbaikan: findValue(['total_biaya_perbaikan', 'total biaya', 'total_cost', 'repair_cost_total'])
+    // Struktur Asset Utama
+    const asset: any = {
+      asset_name: getVal(['asset_name', 'name', 'asset']),
+      asset_brand: getVal(['asset_brand', 'brand']),
+      asset_model: getVal(['asset_model', 'model']),
+      category: getVal(['category', 'kategori']),
+      sub_category: getVal(['sub_category', 'sub_kategori']),
+      asset_type: getVal(['asset_type', 'type', 'tipe']),
+      building: getVal(['building', 'gedung']),
+      floor: getVal(['floor', 'lantai']),
+      zone: getVal(['zone', 'zona']),
+      critical_level: getVal(['critical_level', 'critical']) || 'Healthy',
+      instalation_date: getVal(['instalation_date', 'installation_date', 'tanggal_pasang']),
+      operational_hours: getVal(['operational_hours', 'op_hours', 'jam_operasional']),
+      complaints: []
     };
-    rows.push(normalized);
+
+    // Ekstraksi Log Maintenance (Jika ada issue_type)
+    const issueType = getVal(['issue_type', 'issue', 'keluhan']);
+    if (issueType) {
+      asset.complaints.push({
+        technician_id: getVal(['technician_id', 'technician', 'teknisi_id']),
+        planned_date: getVal(['planned_date', 'planned']),
+        started_date: getVal(['started_date', 'started']),
+        completed_date: getVal(['completed_date', 'completed']),
+        issue_type: issueType,
+        severity: getVal(['severity']) || 'Low',
+        root_cause: getVal(['root_cause', 'cause']),
+        spare_parts_used: getVal(['spare_parts_used', 'parts']),
+        repair_cost: parseRepairCost(getVal(['repair_cost', 'cost', 'biaya'])),
+        is_embedded: 1
+      });
+    }
+
+    rows.push(asset);
   }
   return rows;
 }
@@ -401,7 +423,10 @@ function AddAssetModalInner({ onAssetAdded, onResultReady }: AddAssetModalProps)
         const formattedRul = formatYears(rawData?.predicted_rul !== undefined ? Number(rawData.predicted_rul) : null);
 
         onResultReady({
-          name: assetName, id: rawData.asset_id, category,
+          type: "single",
+          name: assetName, 
+          id: rawData.asset_id, 
+          category,
           location: `${building} · ${floor} · ${zone}`,
           predicted_rul: rawData.predicted_rul,
           instalation_date: instalationDate,
@@ -412,6 +437,11 @@ function AddAssetModalInner({ onAssetAdded, onResultReady }: AddAssetModalProps)
           : `${rawData.message}`
         );
       } else {
+        onResultReady({
+          type: "bulk",
+          results: rawData.results,
+          total: assetCsvRows.length
+        });
         toast.success(`Berhasil mengimpor ${assetCsvRows.length} asset!`);
       }
       

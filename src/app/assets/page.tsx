@@ -414,26 +414,28 @@ export default function AssetsPage() {
 
       {/* Summary Popup Result */}
       <Dialog open={resultOpen} onOpenChange={setResultOpen}>
-        <DialogContent className="sm:max-w-md border-border bg-card">
+        <DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto border-border bg-card">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <CheckCircle2 className="h-6 w-6 text-success" />
-              Asset Prediction Result
+              {resultData?.type === "bulk" ? "Bulk Import Summary" : "Asset Prediction Result"}
             </DialogTitle>
             <DialogDescription>
-              AI Engine has analyzed the asset specifications and historical patterns.
+              {resultData?.type === "bulk" 
+                ? `Processed ${resultData.total} assets from CSV.` 
+                : "AI Engine has analyzed the asset specifications and historical patterns."}
             </DialogDescription>
           </DialogHeader>
 
-          {resultData && (
+          {resultData && resultData.type === "single" && (
             <div className="space-y-6 py-4">
               <div className="flex items-start justify-between border-b border-border pb-4">
                 <div>
                   <h3 className="text-lg font-bold text-foreground">{resultData.name}</h3>
                   <p className="text-xs text-muted-foreground">{resultData.location}</p>
                 </div>
-                <Badge variant="outline" className={cn("rounded-full px-2.5", conditionStyle[resultData.condition as Cond])}>
-                  {resultData.condition}
+                <Badge variant="outline" className={cn("rounded-full px-2.5", conditionStyle[resultData.condition as Cond || "Healthy"])}>
+                  {resultData.condition || "Healthy"}
                 </Badge>
               </div>
 
@@ -494,12 +496,72 @@ export default function AssetsPage() {
                   </div>
                 </div>
               </div>
-
-              <p className="text-[11px] text-center text-muted-foreground px-4">
-                This ML prediction is based on regional operational data and typical wear patterns.
-              </p>
             </div>
           )}
+
+          {resultData && resultData.type === "bulk" && (
+            <div className="py-4 space-y-4">
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div className="p-3 rounded-lg bg-muted/40 border border-border">
+                  <span className="text-[10px] uppercase text-muted-foreground block">Total</span>
+                  <span className="text-xl font-bold">{resultData.total}</span>
+                </div>
+                <div className="p-3 rounded-lg bg-success/10 border border-success/20">
+                  <span className="text-[10px] uppercase text-success block">Success</span>
+                  <span className="text-xl font-bold text-success">
+                    {resultData.results.filter((r: any) => r.success).length}
+                  </span>
+                </div>
+                <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                  <span className="text-[10px] uppercase text-destructive block">Failed</span>
+                  <span className="text-xl font-bold text-destructive">
+                    {resultData.results.filter((r: any) => !r.success).length}
+                  </span>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border overflow-hidden">
+                <Table>
+                  <TableHeader className="bg-muted/50">
+                    <TableRow className="h-8">
+                      <TableHead className="text-[10px] uppercase">Asset ID/Name</TableHead>
+                      <TableHead className="text-[10px] uppercase">RUL Prediction</TableHead>
+                      <TableHead className="text-[10px] uppercase text-right">Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {resultData.results.slice(0, 10).map((res: any, idx: number) => (
+                      <TableRow key={idx} className="h-10">
+                        <TableCell className="py-2">
+                          <div className="text-xs font-medium">#{res.asset_id || "Err"}</div>
+                          <div className="text-[10px] text-muted-foreground truncate max-w-[150px]">{res.asset_name || "Asset"}</div>
+                        </TableCell>
+                        <TableCell className="py-2 text-xs">
+                          {res.predicted_rul ? `${res.predicted_rul.toFixed(2)} yrs` : "-"}
+                        </TableCell>
+                        <TableCell className="py-2 text-right">
+                          {res.success ? (
+                            <Badge className="bg-success/20 text-success border-none text-[9px] h-4">OK</Badge>
+                          ) : (
+                            <Badge className="bg-destructive/20 text-destructive border-none text-[9px] h-4">Fail</Badge>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {resultData.results.length > 10 && (
+                  <div className="p-2 text-center text-[10px] text-muted-foreground bg-muted/20">
+                    ... and {resultData.results.length - 10} more assets
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="text-[11px] text-center text-muted-foreground px-4 mb-4">
+            ML predictions are processed individually for each asset to ensure maximum accuracy.
+          </div>
 
           <DialogFooter>
             <Button onClick={() => setResultOpen(false)} className="w-full bg-gradient-to-r from-primary to-cyan text-primary-foreground shadow-lg font-semibold">

@@ -67,6 +67,11 @@ async function processSingleAsset(assetData: any) {
         throw new Error(`Missing required fields for asset: ${asset_name || 'Unknown'}`);
     }
 
+    const formattedInstalationDate = formatDateForDB(instalation_date);
+    if (!formattedInstalationDate) {
+        throw new Error(`Format tanggal instalasi tidak valid untuk asset: ${asset_name}`);
+    }
+
     const insertQuery = `
         INSERT INTO assets (
             asset_name, asset_brand, asset_model, category, sub_category, 
@@ -86,7 +91,7 @@ async function processSingleAsset(assetData: any) {
         Number(floor),
         zone || null,
         critical_level || 'Healthy',
-        typeof instalation_date === 'string' ? instalation_date.split('T')[0] : instalation_date,
+        formattedInstalationDate.split(' ')[0], // Use YYYY-MM-DD
         operational_hours ? parseFloat(operational_hours) : 0.0
     ]);
 
@@ -97,9 +102,24 @@ async function processSingleAsset(assetData: any) {
     }
 
     // Insert complaints if present
+    let extraKomplain = 0;
+    let extraBiaya = 0;
+
     if (complaints && Array.isArray(complaints) && complaints.length > 0) {
+        extraKomplain = complaints.length;
         for (const comp of complaints) {
-            const technician_id = null;
+            // Validasi technician_id agar tidak melanggar foreign key constraint
+            let validTechnicianId = null;
+            if (comp.technician_id) {
+                const userCheck = await query<{ user_id: number }>(
+                    "SELECT user_id FROM users WHERE user_id = ?", 
+                    [comp.technician_id]
+                );
+                if (userCheck.length > 0) {
+                    validTechnicianId = comp.technician_id;
+                }
+            }
+
             const planned_date = comp.planned_date ? formatDateForDB(comp.planned_date) : null;
             const started_date = comp.started_date ? formatDateForDB(comp.started_date) : null;
             const completed_date = comp.completed_date ? formatDateForDB(comp.completed_date) : null;
@@ -107,8 +127,10 @@ async function processSingleAsset(assetData: any) {
             const severity = comp.severity || null;
             const root_cause = comp.root_cause || null;
             const spare_parts_used = comp.spare_parts_used || null;
-            const repair_cost = comp.repair_cost ? parseFloat(comp.repair_cost) : null;
+            const repair_cost = comp.repair_cost ? parseFloat(comp.repair_cost) : 0;
             const is_embedded = comp.is_embedded !== undefined ? Number(comp.is_embedded) : 0;
+
+            extraBiaya += repair_cost;
 
             await query(
                 `INSERT INTO maintenance_logs (
@@ -117,7 +139,7 @@ async function processSingleAsset(assetData: any) {
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     newAssetId,
-                    technician_id,
+                    validTechnicianId,
                     planned_date,
                     started_date,
                     completed_date,
@@ -132,16 +154,22 @@ async function processSingleAsset(assetData: any) {
         }
     }
 
-    // Trigger AI Engine
+    // Trigger AI Engine Predict RUL
     const aiEngineUrl = "http://localhost:8000/api/predict-rul";
     let calculatedOperatingHours = 0.0;
-    if (instalation_date && operational_hours) {
-        const installDate = new Date(instalation_date);
+    
+    if (formattedInstalationDate && operational_hours) {
+        const installDate = new Date(formattedInstalationDate);
         const today = new Date();
         const diffTime = today.getTime() - installDate.getTime();
         const diffDays = diffTime > 0 ? diffTime / (1000 * 60 * 60 * 24) : 0;
+        
+        // Asumsi operational_hours dari CSV adalah rata-rata jam per hari
         calculatedOperatingHours = parseFloat(operational_hours) * diffDays * (5 / 7);
     }
+
+    const finalTotalKomplain = Number(total_komplain || 0) + extraKomplain;
+    const finalTotalBiaya = parseFloat(total_biaya_perbaikan || 0) + extraBiaya;
 
     try {
         const aiResponse = await fetch(aiEngineUrl, {
@@ -154,8 +182,8 @@ async function processSingleAsset(assetData: any) {
                 "lokasi_lantai": Number(floor),
                 "lokasi_zona": zone || "",
                 "operating_hours": calculatedOperatingHours,
-                "total_komplain": Number(total_komplain || 0),
-                "total_biaya_perbaikan": parseFloat(total_biaya_perbaikan || 0)
+                "total_komplain": finalTotalKomplain,
+                "total_biaya_perbaikan": finalTotalBiaya
             })
         });
 
@@ -166,32 +194,48 @@ async function processSingleAsset(assetData: any) {
                 `UPDATE assets SET predicted_rul = ? WHERE asset_id = ?`,
                 [aiData.predicted_rul, newAssetId]
             );
-            return { asset_id: newAssetId, predicted_rul: aiData.predicted_rul, success: true };
+            return { 
+                asset_id: newAssetId, 
+                predicted_rul: aiData.predicted_rul, 
+                success: true,
+                message: "Asset created and RUL predicted successfully."
+            };
         }
     } catch (e) {
         console.error("[AI_ENGINE_CONNECTION_ERROR]", e);
     }
 
-    return { asset_id: newAssetId, success: true, message: "Asset created but AI prediction skipped or failed." };
+    return { 
+        asset_id: newAssetId, 
+        success: true, 
+        message: "Asset created but AI prediction skipped or failed." 
+    };
 }
 
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
 
+        // Handle Bulk Insert (CSV)
         if (Array.isArray(body)) {
             const results = [];
+            // Looping untuk masing-masing row/asset dari CSV
             for (const asset of body) {
                 try {
                     const res = await processSingleAsset(asset);
                     results.push(res);
                 } catch (err: any) {
-                    results.push({ success: false, message: err.message });
+                    results.push({ 
+                        success: false, 
+                        asset_name: asset.asset_name || "Unknown",
+                        message: err.message 
+                    });
                 }
             }
             return NextResponse.json({ success: true, results });
         }
 
+        // Handle Single Insert
         const result = await processSingleAsset(body);
         return NextResponse.json(result);
 
