@@ -11,7 +11,7 @@ import { usePathname } from "next/navigation";
 
 function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isAuthPage = pathname === "/login";
+  const isAuthPage = pathname === "/login" || pathname === "/landing";
 
   return (
     <>

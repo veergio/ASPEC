@@ -31,12 +31,12 @@ export async function middleware(request: NextRequest) {
   }
 
   // Not authenticated and not on login page → redirect to login
-  if (!isAuthenticated && pathname !== "/login") {
+  if (!isAuthenticated && pathname !== "/login" && pathname !== "/landing") {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
   // Authenticated and on login page → redirect to dashboard
-  if (isAuthenticated && pathname === "/login") {
+  if (isAuthenticated && (pathname === "/landing")) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
